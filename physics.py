@@ -133,3 +133,25 @@ def wien_approximation(key, beta, alpha, num_samples):
 	return samples
 
 
+def occupation_mask(n, R):
+	"""
+	Returns a particle occupation indicator array for an NxN space, 
+	based on the particle positions contained in R.
+	n
+		Number of lattice sites in each dimension of the space.
+	R
+		Array of particle positions. 2D, Kx2. 
+	"""
+	mask = jnp.zeros((n, n), dtype=int).at[R[:, 0], R[:, 1]].set(1)
+	return mask
+
+
+def masked(x, y, occupation_mask):
+	"""
+	Implements drive masking that treats particles as perfect barriers. 
+	Returns 0 if there is a particle in {x} x (y,n], 1 otherwise. 
+	"""
+	column = occupation_mask[x]
+	i = jnp.argmax(column)
+	v = jnp.max(column)
+	return v == 0 or y <= i
