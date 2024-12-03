@@ -38,11 +38,13 @@ def potential_energy_everywhere(R, Q, V):
 	return U
 
 
+@partial(jax.jit, static_argnums=[4, 5])
 def potential(i, r, R, Q, point_func, pauli_exclusion=True):
 	"""
 	The potential at 'r' relative to particle i (that is, excluding self-interaction) 
 	with the shape of the potential generate by a point source determined by point_func. 
 	Optionally accounts for Pauli exclusion. 
+
 	i
 		Index of the particle we are computing the potential relative to.
 	r 
@@ -67,7 +69,7 @@ def potential(i, r, R, Q, point_func, pauli_exclusion=True):
 		V = jnp.sum(V_expanded)
 		return V
 
-	if pauli_exclusion:	 # jit statically
+	if pauli_exclusion:
 		charge_eq = q == Q_minus
 		position_eq = r == R_minus
 		V = jax.lax.cond(jnp.any(charge_eq & position_eq), lambda: jnp.inf, lambda: compute)
@@ -77,6 +79,23 @@ def potential(i, r, R, Q, point_func, pauli_exclusion=True):
 
 def potential_energy(V, q):
 	return jax.lax.where(V == jnp.inf, jnp.inf, q * V)
+
+
+def difference_arrays(V):
+	x_diffs = jnp.diff(V, axis=0)
+	y_diffs = jnp.diff(V, axis=-1)
+	zero_row = jnp.zeros((1, V.shape[-1]))
+	zero_col = jnp.zeros((V.shape[0], 1))
+	x_delta = jnp.concatenate(zero_row, x_diffs, zero_row, axis=0)
+	y_delta = jnp.concatenate(zero_col, y_diffs, zero_col, axis=-1)
+	return x_delta, y_delta
+
+
+def interaction_field(delta_Vx, delta_Vy):
+	# multiply by charge to get force
+	x_component = (delta_Vx[1:, :] + delta_Vx[:-1, :]) / 2
+	y_component = (delta_Vy[:, 1:] + delta_Vy[:, :-1]) / 2
+	return jnp.stack(x_component, y_component)
 
 
 @jax.jit
@@ -137,6 +156,7 @@ def occupation_mask(n, R):
 	"""
 	Returns a particle occupation indicator array for an NxN space, 
 	based on the particle positions contained in R.
+
 	n
 		Number of lattice sites in each dimension of the space.
 	R
@@ -155,3 +175,67 @@ def masked(x, y, occupation_mask):
 	i = jnp.argmax(column)
 	v = jnp.max(column)
 	return v == 0 or y <= i
+
+
+@partial(jax.jit, static_argnums=[1, 2, 3])
+def brownian_noise(key, beta, gamma, num_samples):
+	keys = jax.random.split(key, num=num_samples)
+
+	@jax.jit
+	def sample(key):
+		return jnp.sqrt(2*gamma / beta) * jax.jax.random.normal(key)
+
+	samples = jax.vmap(sample)(keys)
+	return samples
+
+
+def calculate_work(path, field, coupling_constant):
+	"""
+	Calculate the work done by a field on a particle moving along a path, 
+	with the strength of the interaction determined by the appropriate 
+	coupling constant of the particle (e.g. charge or mass).
+
+	path
+		Array of adjacent positions, 0-padded. 2D, Nx2. Assuming the path is length at most N-1. 
+	field
+		Array of field values at each position in space. 2D, NxN.
+	coupling_constant
+		Scalar. 
+	"""
+	steps = jnp.diff(path, axis=0)
+	end = jnp.argmin(path, axis=0)[0] - 1
+
+	def add_work_step(i, work):
+		r = path[i]
+		delta = steps[i]
+		work_step = jnp.dot(field[r], delta)
+		return work + work_step
+
+	work = jax.lax.fori_loop(0, end, add_work_step, 0)
+	return coupling_constant * work 	# multiply coupling at the end for efficiency
+
+
+def calculate_work_v2(path, field, coupling_constant):
+	"""
+	Calculate the work done by a field on a particle moving along a path, 
+	with the strength of the interaction determined by the appropriate 
+	coupling constant of the particle (e.g. charge or mass).
+
+	path
+		Array of adjacent positions, 0-padded. 2D, Nx2. Assuming the path is length at most N-1. 
+	field
+		Array of field values at each position in space. 2D, NxN.
+	coupling_constant
+		Scalar. 
+	"""
+	steps = jnp.diff(path, axis=0)
+	end = jnp.argmin(path, axis=0)[0] - 1
+
+	def work_step(r, delta):
+		return jnp.dot(field[r], delta)
+
+	work_steps = jax.vmap(work_step)(path, steps)
+	work_steps[end] = 0
+	work = jnp.sum(work_steps)
+
+	return coupling_constant * work 	# multiply coupling at the end for efficiency
