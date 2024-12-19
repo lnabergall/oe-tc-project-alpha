@@ -254,13 +254,14 @@ def bound_states(all_bonds, pad_value):
 	return bound_states
 
 
-def centers_of_mass(R, bound_states):
+def centers_of_mass(R, bound_states, masses):
+	"""Returns the center of mass of each bound state in a 'k' length 1D Array."""
 	k = R.shape[0]
 	position_sums = jnp.zeros((k, 2), dtype=int)
 	counts = jnp.zeros((k,), dtype=int)
-	position_sums = position_sums.at[bound_states].add(R)
-	counts = counts.at[bound_states].add(1)
-	centers = jnp.where(counts > 0, position_sums / counts, 0.0)	# use a mask to handle padding
+	position_sums = position_sums.at[bound_states].add(masses*R)
+	mass_sums = counts.at[bound_states].add(masses)
+	centers = jnp.where(mass_sums > 0, position_sums / mass_sums, 0.0)	# use a mask to handle padding
 	return centers
 
 
