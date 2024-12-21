@@ -5,7 +5,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from .utils import bfs
+from utils import bfs
 
 
 @jax.jit
@@ -266,8 +266,46 @@ def centers_of_mass(R, bound_states, masses, pad_value):
 	return centers
 
 
-def rotate(R, bound_states, theta):
-	pass
+def rotate(R, coms, thetas):
+	"""
+	Rotates each particle about a given center of mass by a multiple 'theta' of 90 degrees,
+	upper bounded by 270 degrees. 
+
+	R
+		Array of particle positions. 2D, kx2.
+	coms
+		Array of centers of mass. 2D, kx2.
+	thetas
+		Array of angles. 1D, k. 
+	"""
+	# if at all slow could convert to direct array creation
+	rotate_matrix90 = jnp.array([[0, -1], [1, 0]])
+	rotate_matrix180 = jnp.array([[-1, 0], [0, -1]])
+	rotate_matrix270 = jnp.array([[0, 1], [-1, 0]])
+
+	@partial(jax.jit, static_argnums=[1])
+	def origin_rotate(r, theta=90):
+		if theta == 0:
+			r_new = r
+		elif theta == 90:
+			r_new = rotate_matrix90 @ r 
+		elif theta == 180:
+			r_new = rotate_matrix180 @ r
+		elif theta == 270:
+			r_new = rotate_matrix270 @ r
+		return r_new
+
+	rotation_branches = tuple(partial(origin_rotate, theta=i) for i in (0, 90, 180, 270))
+	
+	def rotation_fn(r, com, theta):
+		theta_idx = theta // 90
+		r_centered = r - com
+		r_centered_rotated = jax.lax.switch(theta_idx, rotation_branches, r_centered)
+		r_rotated = r_centered_rotated + com
+		return r_rotated
+
+	R_rotated = jax.vmap(rotation_fn)(R, coms, thetas)
+	return R_rotated
 
 
 def difference_arrays(V):
