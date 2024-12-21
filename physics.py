@@ -468,6 +468,29 @@ def calculate_work_v2(path, field, coupling_constant):
 	return coupling_constant * work 	# multiply coupling at the end for efficiency
 
 
+def calculate_force(path, field, d):
+	"""
+	Calculate the net force applied to a particle moving along a path 
+	with a normalization constant 'd'. 
+
+	path
+		Array of adjacent positions, 0-padded. 2D, Nx2. Assuming the path is length at most N-1. 
+	field
+		Array of field values at each position in space. 2D, NxN.
+	d
+		Scalar. 
+	"""
+	end = jnp.argmin(path, axis=0)[0] - 1
+
+	def add_weighted_force(i, force):
+		r = path[i]
+		weighted_force = field[r] / d
+		return force + weighted_force
+
+	force = jax.lax.fori_loop(0, end, add_weighted_force, 0)
+	return force 
+
+
 def calculate_excitations(i, R, L, work, delta, pad_value):
 	"""
 	Calculates the energy received by each particle in an energy emission event.
