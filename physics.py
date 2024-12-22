@@ -468,9 +468,9 @@ def calculate_work_v2(path, field, coupling_constant):
 	return coupling_constant * work 	# multiply coupling at the end for efficiency
 
 
-def calculate_force(path, field, d):
+def calculate_field(path, field, d):
 	"""
-	Calculate the net force applied to a particle moving along a path 
+	Calculate the net field experienced by a particle moving along a path 
 	with a normalization constant 'd'. 
 
 	path
@@ -482,13 +482,22 @@ def calculate_force(path, field, d):
 	"""
 	end = jnp.argmin(path, axis=0)[0] - 1
 
-	def add_weighted_force(i, force):
+	def add_weighted_field(i, field):
 		r = path[i]
-		weighted_force = field[r] / d
-		return force + weighted_force
+		weighted_field = field[r] / d
+		return field + weighted_field
 
-	force = jax.lax.fori_loop(0, end, add_weighted_force, 0)
-	return force 
+	field = jax.lax.fori_loop(0, end, add_weighted_field, 0)
+	return field 
+
+
+def net_force(path, field_external, coupling_constant, d, force_random):
+	weighted_path_field = calculate_field(path, field_external, d)
+	end = jnp.argmin(path, axis=0)[0] - 1
+	last_field = path[end]
+	weighted_last_field = last_field * (d - end) / d
+	force_external = coupling_constant * (weighted_path_field + weighted_last_field)
+	return force_random + force_external
 
 
 def calculate_excitations(i, R, L, work, delta, pad_value):
