@@ -87,7 +87,7 @@ def potential_energy_everywhere(R, Q, V):
 	Q
 		Array of particle charges. 1D, k.
 	V
-		Array of potentials at all positions in space. 2D, NxN.
+		Array of potentials at all positions in space. 2D, nxn.
 	"""
 	U = Q * V[R[:, 0], R[:, 1]]
 	return U
@@ -381,7 +381,7 @@ def wien_approximation(key, beta, alpha, num_samples):
 
 def occupation_mask(n, R):
 	"""
-	Returns a particle occupation indicator array for an NxN space, 
+	Returns a particle occupation indicator array for an nxn space, 
 	based on the particle positions contained in R.
 
 	n
@@ -423,9 +423,9 @@ def calculate_work(path, field, coupling_constant):
 	coupling constant of the particle (e.g. charge or mass).
 
 	path
-		Array of adjacent positions, 0-padded. 2D, Nx2. Assuming the path is length at most N-1. 
+		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
 	field
-		Array of field values at each position in space. 2D, NxN.
+		Array of field values at each position in space. 2D, nxn.
 	coupling_constant
 		Scalar. 
 	"""
@@ -449,9 +449,9 @@ def calculate_work_v2(path, field, coupling_constant):
 	coupling constant of the particle (e.g. charge or mass).
 
 	path
-		Array of adjacent positions, 0-padded. 2D, Nx2. Assuming the path is length at most N-1. 
+		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
 	field
-		Array of field values at each position in space. 2D, NxN.
+		Array of field values at each position in space. 2D, nxn.
 	coupling_constant
 		Scalar. 
 	"""
@@ -468,15 +468,16 @@ def calculate_work_v2(path, field, coupling_constant):
 	return coupling_constant * work 	# multiply coupling at the end for efficiency
 
 
-def calculate_field(path, field, d):
+@partial(jax.jit, static_argnums=[3])
+def calculate_field(path, field, d, torque=False, com=None):
 	"""
 	Calculate the net field experienced by a particle moving along a path 
 	with a normalization constant 'd'. 
 
 	path
-		Array of adjacent positions, 0-padded. 2D, Nx2. Assuming the path is length at most N-1. 
+		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
 	field
-		Array of field values at each position in space. 2D, NxN.
+		Array of field values at each position in space. 2D, nxn.
 	d
 		Scalar. 
 	"""
@@ -485,19 +486,44 @@ def calculate_field(path, field, d):
 	def add_weighted_field(i, field):
 		r = path[i]
 		weighted_field = field[r] / d
+		if torque:
+			weighted_field = calculate_torque(r, com, force)
 		return field + weighted_field
 
 	field = jax.lax.fori_loop(0, end, add_weighted_field, 0)
 	return field 
 
 
-def net_force(path, field_external, coupling_constant, d, force_random):
-	weighted_path_field = calculate_field(path, field_external, d)
+calculate_torque_field = partial(calculate_field, torque=True)
+
+
+@partial(jax.jit, static_argnums=[5])
+def net_force(path, field_external, coupling_constant, d, force_random, torque=False, com=None):
 	end = jnp.argmin(path, axis=0)[0] - 1
-	last_field = path[end]
-	weighted_last_field = last_field * (d - end) / d
-	force_external = coupling_constant * (weighted_path_field + weighted_last_field)
-	return force_random + force_external
+	end_position = path[end]
+	weighted_last_field = field_external[end_position] * (d - end) / d
+	weighted_last_force = coupling_constant * weighted_last_field
+
+	if torque:
+		weighted_path_field = calculate_torque_field(path, field_external, d, com=com)
+	else:
+		weighted_path_field = calculate_field(path, field_external, d)
+
+	weighted_path_force = coupling_constant * weighted_path_field
+	force = force_random + weighted_last_force
+
+	if torque:
+		force = calculate_torque(end_position, com, force)
+
+	return force + weighted_path_force
+
+
+net_torque = partial(net_force, torque=True)
+
+
+def calculate_torque(r, r_axis, force):
+	position_vec = r - r_axis
+	return jnp.cross(position_vec, force)
 
 
 def calculate_excitations(i, R, L, work, delta, pad_value):
@@ -515,7 +541,7 @@ def calculate_excitations(i, R, L, work, delta, pad_value):
 		Array of lattice sites, with each element indicating whether the site is empty or filled.
 		If an element is pad_value, it is empty, otherwise it is filled with the element 
 		indicating the index of the particle. Assumes at most two particles may occupy each site. 
-		3D, NxNx2. 
+		3D, nxnx2. 
 	work
 		Scalar, the amount of work released during the emission. 
 	delta
