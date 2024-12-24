@@ -11,7 +11,7 @@ from utils import bfs
 @jax.jit
 def lattice_distance(r, s):
 	"""Compute lattice distance between points r and s."""
-	return jnp.linalg.norm(r - s, ord=1)
+	return jnp.linalg.norm(r - s, ord=1, axis=-1)
 
 
 @jax.jit
@@ -166,7 +166,7 @@ def potential_energy_factors(i, R, Q, point_func, pad_value=-1, factor_limit=Non
 
 	energy_factors = jax.vmap(energy_fn)(R_minus, Q_minus)
 	if factor_limit is not None:
-		nonzero_indices = jnp.nonzero(energy_factors, factor_limit, fill_value=pad_value)
+		nonzero_indices = jnp.nonzero(energy_factors, size=factor_limit, fill_value=pad_value)
 		energy_factors = energy_factors[nonzero_indices]
 		nonzero_indices = nonzero_indices.at[nonzero_indices >= i].add(1)	# reset the indices correctly
 		indices = nonzero_indices
@@ -175,6 +175,17 @@ def potential_energy_factors(i, R, Q, point_func, pad_value=-1, factor_limit=Non
 		indices = indices.at[i:].add(1)	# reset the indices correctly
 
 	return energy_factors, indices
+
+
+def potential_energy_factors_bulk(j, prev_bound_states, curr_bound_states, 
+								  all_energy_factors, all_factor_indices, pad_value=-1):
+	k = curr_bound_states.shape[0]
+	new_particles_mask = jnp.logical_xor(curr_bound_states == j, prev_bound_states == j)
+	filtered_energies = jnp.where(new_particles_mask, all_energy_factors, 0)
+	filtered_indices = jnp.where(new_particles_mask, all_factor_indices, pad_value)
+	energy_factors = jnp.zeros(k)
+	energy_factors = energy_factors.at[filtered_indices].add(filtered_energies)
+	return energy_factors
 
 
 def bonded(U, max_energy):
@@ -264,6 +275,16 @@ def centers_of_mass(R, bound_states, masses, pad_value):
 	# use a mask to handle padding
 	centers = jnp.where(mass_sums > 0, position_sums / mass_sums, pad_value)	
 	return centers
+
+
+def moments_of_inertia(R, coms, bound_states, masses, pad_value):
+	"""Returns the moment of inertia of each bound state in a padded 'k' length 1D Array."""
+	k = R.shape[0]
+	MOIs = jnp.zeros((k,))
+	arm_lengths = lattice_distance(R, coms)
+	particle_MOIs = masses * arm_lengths
+	MOIs = MOIs.at[bound_states].add(particle_MOIs)
+	return MOIs
 
 
 def rotate(R, coms, thetas):
@@ -524,6 +545,12 @@ net_torque = partial(net_force, torque=True)
 def calculate_torque(r, r_axis, force):
 	position_vec = r - r_axis
 	return jnp.cross(position_vec, force)
+
+
+def transferred_force(r_source, force_source, r_dest, m, m_block, I_block, torque_block):
+	angular_component = m * jnp.cross(torque_block, r_dest - r_source) / I_block
+	linear_component = m * force_source / m_block
+	return linear_component + angular_component
 
 
 def calculate_excitations(i, R, L, work, delta, pad_value):
