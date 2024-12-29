@@ -437,9 +437,34 @@ def brownian_noise(key, beta, gamma, num_samples):
 	return samples
 
 
+def energy_barrier(path, potential, coupling_constant, lower_bound):
+	"""
+	Calculates the energy barrier encountered by a particle moving along a path
+	from a potential and coupling constant. 
+
+	path 
+		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
+	potential
+		Array of potential values at each position in space. 2D, nxn. 
+	coupling_constant
+		Scalar. 
+	lower_bound
+		Scalar giving a lower bound for the potential. 
+	"""
+	end = jnp.argmin(path, axis=0)[0] - 1
+
+	def step_fn(i, max_energy):
+		energy = coupling_constant * potential[path[i]]
+		return jnp.max(jnp.array((energy, max_energy)))
+
+	max_energy = jax.lax.fori_loop(0, end + 1, step_fn, lower_bound)
+	boundary_max_energy = jnp.max(coupling_constant * potential[path[(0, end), :]])
+	return max_energy - boundary_max_energy
+
+
 def calculate_work(path, field, coupling_constant):
 	"""
-	Calculate the work done by a field on a particle moving along a path, 
+	Calculates the work done by a field on a particle moving along a path, 
 	with the strength of the interaction determined by the appropriate 
 	coupling constant of the particle (e.g. charge or mass).
 
@@ -465,7 +490,7 @@ def calculate_work(path, field, coupling_constant):
 
 def calculate_work_v2(path, field, coupling_constant):
 	"""
-	Calculate the work done by a field on a particle moving along a path, 
+	Calculates the work done by a field on a particle moving along a path, 
 	with the strength of the interaction determined by the appropriate 
 	coupling constant of the particle (e.g. charge or mass).
 
@@ -492,7 +517,7 @@ def calculate_work_v2(path, field, coupling_constant):
 @partial(jax.jit, static_argnums=[3])
 def calculate_field(path, field, d, torque=False, com=None):
 	"""
-	Calculate the net field experienced by a particle moving along a path 
+	Calculates the net field experienced by a particle moving along a path 
 	with a normalization constant 'd'. 
 
 	path

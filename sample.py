@@ -110,7 +110,7 @@ def gibbs_kernel(key, positions, partition, logdensity_fn,
 		and array of all particle positions.
 	proposal_generator
 		A function that samples a proposal given a PRNG key, a particle state, 
-		and a array of all particle positions.
+		and an array of all particle positions.
 	step_fn
 		A function that samples from the distribution P(R'|R) for a single particle update.
 		Accepts a PRNG key, particle state, logdensity_fn, proposal_generator as inputs, 
@@ -146,3 +146,29 @@ def gibbs_kernel(key, positions, partition, logdensity_fn,
 
 ### need to make logdensity_fn ((i, position), proposed_position, positions) -> log_probability
 ### and proposal_generator (key, (i, position), positions) -> proposed_position
+
+
+def discrete_ball_map(indices):
+	map_matrix = jnp.array([[1, -1], [1, 1]])
+	return (map_matrix @ indices) / 2	# divide by 2 after for possible efficiency
+
+
+def uniform_proposal_generator(key, state, positions, range_):
+	"""
+	Generates a new position uniformly sampled from all points 
+	within 'range_' distance of the particle. Does not exclude any points, 
+	e.g. points of infinite potential for the particle.
+	"""
+	i, position = state
+	key, subkey = jax.random.split(key)
+	sample_indices = jax.random.randint(subkey, (2,), -range_, range_+1)
+	shifted_proposal = discrete_ball_map(sample_indices)
+	proposal = position + shifted_proposal
+	return proposal
+
+
+def logdensity_function(state, proposed_position, positions, charges, masses, beta):
+	i, position = state
+	pass
+
+### only for first phase, generalize to second as well---just an extra sample for the rotation
