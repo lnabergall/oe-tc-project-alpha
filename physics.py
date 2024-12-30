@@ -43,8 +43,8 @@ def canonical_shortest_path(r_start, r_end, n):
 		i_diff = i - i_square
 		element_within_square = r_start + (r_diff_sign * jnp.array((half + parity, half)))
 		element_outside_square = element_square + (i_diff * step_outside_square)
-		element_on_path = jax.lax.select_n(i <= i_square, element_within_square, element_outside_square)
-		element = jax.lax.select_n(i > length, padding, element_on_path)
+		element_on_path = jax.lax.select_n(i <= i_square, element_outside_square, element_within_square)
+		element = jax.lax.select_n(i > length, element_on_path, padding)
 		return element
 
 	path = jnp.fromfunction(path_creator, (n, 2), dtype=int)
