@@ -23,6 +23,32 @@ def lattice_distances(r, S):
 	return jnp.linalg.norm(r - S, axis=-1)
 
 
+def canonical_shortest_path(r_start, r_end, n):
+	r_diff = r_end - r_start
+	r_diff_sign = jnp.sign(r_diff)
+	r_diff_abs = jnp.abs(r_diff)
+	length = jnp.sum(r_diff_abs)
+	i_square_half = jnp.abs(jnp.min(r_diff))
+	i_square *= 2
+	horiz_step = jnp.array([1, 0])
+	vert_step = jnp.array([0, 1])
+	nonsquare_step = jnp.where(r_diff_abs[0] >= r_diff_abs[1], horiz_step, vert_step)
+	padding = jnp.array((-1, -1), dtype=int)
+
+	def path_creator(i, j):
+		half, parity = i // 2, i % 2
+		i_diff = i - i_square
+		element_within_square = r_start + (r_diff_sign * jnp.array((half + parity, half)))
+		element_square = r_start + (r_diff_sign * jnp.array((i_square_half, i_square_half)))
+		element_outside_square = element_square + (i_diff * nonsquare_step)
+		element_on_path = jax.lax.select_n(i <= i_square, element_within_square, element_outside_square)
+		element = jax.lax.select_n(i > length, padding, element_on_path)
+		return element
+
+	path = jnp.fromfunction(path_creator, (n, 2), dtype=int)
+	return path
+
+
 def boundaries(r, delta):
 	x, y = r
 	min_x = jnp.clip(x - delta, min=0)
@@ -443,7 +469,7 @@ def energy_barrier(path, potential, coupling_constant, lower_bound):
 	from a potential and coupling constant. 
 
 	path 
-		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
+		Array of adjacent positions, (-1)-padded. 2D, nx2. Assuming the path is length at most n-1. 
 	potential
 		Array of potential values at each position in space. 2D, nxn. 
 	coupling_constant
@@ -469,7 +495,7 @@ def calculate_work(path, field, coupling_constant):
 	coupling constant of the particle (e.g. charge or mass).
 
 	path
-		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
+		Array of adjacent positions, (-1)-padded. 2D, nx2. Assuming the path is length at most n-1. 
 	field
 		Array of field values at each position in space. 2D, nxn.
 	coupling_constant
@@ -495,7 +521,7 @@ def calculate_work_v2(path, field, coupling_constant):
 	coupling constant of the particle (e.g. charge or mass).
 
 	path
-		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
+		Array of adjacent positions, (-1)-padded. 2D, nx2. Assuming the path is length at most n-1. 
 	field
 		Array of field values at each position in space. 2D, nxn.
 	coupling_constant
@@ -521,7 +547,7 @@ def calculate_field(path, field, d, torque=False, com=None):
 	with a normalization constant 'd'. 
 
 	path
-		Array of adjacent positions, 0-padded. 2D, nx2. Assuming the path is length at most n-1. 
+		Array of adjacent positions, (-1)-padded. 2D, nx2. Assuming the path is length at most n-1. 
 	field
 		Array of field values at each position in space. 2D, nxn.
 	d
