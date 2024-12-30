@@ -153,18 +153,43 @@ def discrete_ball_map(indices):
 	return (map_matrix @ indices) / 2	# divide by 2 after for possible efficiency
 
 
-def uniform_proposal_generator(key, state, positions, range_):
+def uniform_position_proposal_generator(key, position, range_):
 	"""
 	Generates a new position uniformly sampled from all points 
 	within 'range_' distance of the particle. Does not exclude any points, 
 	e.g. points of infinite potential for the particle.
 	"""
-	i, position = state
 	key, subkey = jax.random.split(key)
-	sample_indices = jax.random.randint(subkey, (2,), -range_, range_+1)
+	sample_indices = jax.random.randint(subkey, (2,), -range_, range_ + 1)
 	shifted_proposal = discrete_ball_map(sample_indices)
 	proposal = position + shifted_proposal
 	return proposal
+
+
+def uniform_orientation_proposal_generator(key, angular_range):
+	"""
+	Generates a new orientation uniformly sampled from all orientations
+	within 'angular_range' distance of the current orientation. Does not exclude any orientations,
+	e.g. orientations of infinite potential for the bound state. 
+	"""
+	key, subkey = jax.random.split(key)
+	max_quarter_spins = angular_range // 90
+	proposal = jax.random.randint(subkey, (1,), -max_quarter_spins, max_quarter_spins + 1)
+	proposal *= 90
+	return proposal
+
+
+@partial(jax.jit, static_argnums=[5])
+def uniform_proposal_generator(key, state, positions, range_, angular_range=None, bound_state=False):
+	position_proposal = uniform_position_proposal_generator(key, state[1], range_)
+	if bound_state:
+		orientation_proposal = uniform_orientation_proposal_generator(key, angular_range)
+		return proposed_position, orientation_proposal
+	else:
+		return proposed_position
+
+
+uniform_boundstate_proposal_generator = partial(uniform_proposal_generator, bound_state=True)
 
 
 def logdensity_function(state, proposed_position, positions, charges, masses, beta):
