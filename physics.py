@@ -24,23 +24,25 @@ def lattice_distances(r, S):
 
 
 def canonical_shortest_path(r_start, r_end, n):
+	"""
+	Returns a canonical shortest path between r_start and r_end, where we take 
+	a staircase path until we reach a straight line to r_end. 
+	"""
 	r_diff = r_end - r_start
 	r_diff_sign = jnp.sign(r_diff)
 	r_diff_abs = jnp.abs(r_diff)
 	length = jnp.sum(r_diff_abs)
 	i_square_half = jnp.abs(jnp.min(r_diff))
 	i_square *= 2
-	horiz_step = jnp.array([1, 0])
-	vert_step = jnp.array([0, 1])
-	nonsquare_step = jnp.where(r_diff_abs[0] >= r_diff_abs[1], horiz_step, vert_step)
+	element_square = r_start + (r_diff_sign * jnp.array((i_square_half, i_square_half)))
+	step_outside_square = jnp.where(r_diff_abs[0] >= r_diff_abs[1], jnp.array([1, 0]), jnp.array([0, 1]))
 	padding = jnp.array((-1, -1), dtype=int)
 
 	def path_creator(i, j):
 		half, parity = i // 2, i % 2
 		i_diff = i - i_square
 		element_within_square = r_start + (r_diff_sign * jnp.array((half + parity, half)))
-		element_square = r_start + (r_diff_sign * jnp.array((i_square_half, i_square_half)))
-		element_outside_square = element_square + (i_diff * nonsquare_step)
+		element_outside_square = element_square + (i_diff * step_outside_square)
 		element_on_path = jax.lax.select_n(i <= i_square, element_within_square, element_outside_square)
 		element = jax.lax.select_n(i > length, padding, element_on_path)
 		return element
