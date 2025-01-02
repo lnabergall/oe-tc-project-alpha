@@ -1,14 +1,102 @@
 from typing import NamedTuple
 from datetime import date
+from functools import partial
+from dataclasses import dataclass, field, asdict
 
 import numpy as np
 
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
+from jax.tree_util import register_pytree_node_class
 
 
 key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+
+
+@register_pytree_node_class
+@dataclass
+class ParticleSystem:
+	# system
+	n: int 								# number of lattice points along one dimension
+	k: int 								# number of particles
+	t: int  							# number of particle types
+	N: jax.Array						# number particles of each type, should sum to k. 1D, t.
+	T_M: jax.Array						# particle type masses. 1D, t.
+	T_Q: jax.Array						# particle type charges. 1D, t.
+
+	# viscous heat bath
+	beta: float 						# inverse temperature, 1/T
+	gamma: float						# collision coefficient
+
+	# potential energy 
+	rho: float 							# range of the potential
+	point_func: callable 				# point function of the potential
+
+	# bonding 
+	bond_energy: float					# maximum energy defining a bond
+
+	# external drive
+	alpha: float						# scale factor in Wien approximation to Planck's law
+
+	# radiation emission
+	delta: float						# range of radiation emission
+
+	# randomness
+	key: jax.Array						# PRNG key for stochastic processes
+
+	# particles
+	pauli_exclusion: bool = True 		# Pauli exclusion indicator
+	T: jax.Array = field(default=None)	# particle types, to be initialized. 1D, k.
+	M: jax.Array = field(default=None)	# particle masses, to be initialized. 1D, k.
+	Q: jax.Array = field(default=None)	# particle charges, to be initialized. 1D, k.
+	R: jax.Array = field(default=None)	# particle positions, to be initialized. 1D, k.
+
+	def __post_init__(self):
+		if self.T is None:
+			self._assign_properties()
+		if self.R is None:
+			self.initialize()
+
+	def _assign_properties(self):
+		self.T = jnp.repeat(jnp.arange(self.t), self.N, total_repeat_length=self.k) 	# particle types
+		self.M = jnp.fromfunction(lambda i: self.T_M[self.T[i]], (self.k,), dtype=int)  # particle masses
+		self.Q = jnp.fromfunction(lambda i: self.T_Q[self.T[i]], (self.k,), dtype=int)  # particle charges
+
+	def tree_flatten(self):
+		fields = asdict(self)
+		static_fields = {attr: val for attr, val in fields.items() if not isinstance(val, jax.Array)}
+		other_fields = tuple(val for val in fields.values() if isinstance(val, jax.Array))
+		return (other_fields, static_fields)
+
+	@classmethod
+	def tree_unflatten(cls, aux_data, children):
+		return cls(**aux_data, *children)
+
+	def initialize(self):
+		self.R = sample_lattice_points(self.n, self.k, replace=False)
+
+	def step(self):
+		pass
+
+	def particle_logdensity_function(self):
+		pass
+
+	def bound_state_logdensity_function(self):
+		pass
+
+	def particle_proposal_generator(self, state, range_):
+		return uniform_proposal_generator(self.key, state, self.R, range_)
+
+	def boundstate_proposal_generator(self, state, range_, angular_range):
+		return uniform_boundstate_proposal_generator(self.key, state, self.R, range_, angular_range)
+
+
+@partial(jax.jit, static_argnums=[2])
+def sample_lattice_points(n, k, replace=False):
+	samples_1D = jax.random.choice(n**2, (k,), replace=replace)
+	samples = jnp.stack((samples_1D // n, samples_1D % n), axis=1)
+	return samples
+
 
 
 class FSInfo(NamedTuple):
@@ -27,7 +115,7 @@ class FSInfo(NamedTuple):
 	position: jax.Array
 
 
-def select_with_fills(padded_indices, X, pad_value)
+def select_with_fills(padded_indices, X, pad_value):
 	"""
 	Select rows of 'X' using the 2D Array padded_indices containing rows of row indices of 'X'
 	padded with 'pad_value' to account for variable length slices. 
@@ -192,7 +280,7 @@ def uniform_proposal_generator(key, state, positions, range_, angular_range=None
 uniform_boundstate_proposal_generator = partial(uniform_proposal_generator, bound_state=True)
 
 
-def logdensity_function(state, proposed_position, positions, charges, masses, beta):
+def particle_logdensity_function(state, proposed_position, positions, charges, masses, beta):
 	i, position = state
 	pass
 
