@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
+from physics import *
+
 
 key = jax.random.key(int(date.today().strftime("%Y%m%d")))
 
@@ -17,50 +19,48 @@ key = jax.random.key(int(date.today().strftime("%Y%m%d")))
 @dataclass
 class ParticleSystem:
 	# system
-	n: int 								# number of lattice points along one dimension
-	k: int 								# number of particles
-	t: int  							# number of particle types
-	N: jax.Array						# number particles of each type, should sum to k. 1D, t.
-	T_M: jax.Array						# particle type masses. 1D, t.
-	T_Q: jax.Array						# particle type charges. 1D, t.
+	n: int 									# number of lattice points along one dimension
+	k: int 									# number of particles
+	t: int  								# number of particle types
+	N: jax.Array							# number particles of each type, should sum to k. 1D, t.
+	T_M: jax.Array							# particle type masses. 1D, t.
+	T_Q: jax.Array							# particle type charges. 1D, t.
 
 	# viscous heat bath
-	beta: float 						# inverse temperature, 1/T
-	gamma: float						# collision coefficient
+	beta: float 							# inverse temperature, 1/T
+	gamma: float							# collision coefficient
 
 	# potential energy 
-	rho: float 							# range of the potential
-	point_func: callable 				# point function of the potential
+	rho: float 								# range of the potential
+	point_func: callable 					# point function of the potential
+	energy_lower_bound: float				# lower bound for the potential energy of a particle
 
 	# bonding 
-	bond_energy: float					# maximum energy defining a bond
+	bond_energy: float						# maximum energy defining a bond
 
 	# external drive
-	alpha: float						# scale factor in Wien approximation to Planck's law
+	alpha: float							# scale factor in Wien approximation to Planck's law
 
 	# radiation emission
-	delta: float						# range of radiation emission
+	delta: float							# range of radiation emission
 
-	# randomness
-	key: jax.Array						# PRNG key for stochastic processes
+	# stochasticity
+	key: jax.Array							# PRNG key for stochastic processes
+
+	### --- data fields with defaults ---
 
 	# particles
-	pauli_exclusion: bool = True 		# Pauli exclusion indicator
-	T: jax.Array = field(default=None)	# particle types, to be initialized. 1D, k.
-	M: jax.Array = field(default=None)	# particle masses, to be initialized. 1D, k.
-	Q: jax.Array = field(default=None)	# particle charges, to be initialized. 1D, k.
-	R: jax.Array = field(default=None)	# particle positions, to be initialized. 1D, k.
+	pauli_exclusion: bool = True 			# Pauli exclusion indicator
+	T: jax.Array = field(default=None)		# particle types, to be initialized. 1D, k.
+	M: jax.Array = field(default=None)		# particle masses, to be initialized. 1D, k.
+	Q: jax.Array = field(default=None)		# particle charges, to be initialized. 1D, k.
 
 	def __post_init__(self):
 		if self.T is None:
 			self._assign_properties()
-		if self.R is None:
-			self.initialize()
 
 	def _assign_properties(self):
-		self.T = jnp.repeat(jnp.arange(self.t), self.N, total_repeat_length=self.k) 	# particle types
-		self.M = jnp.fromfunction(lambda i: self.T_M[self.T[i]], (self.k,), dtype=int)  # particle masses
-		self.Q = jnp.fromfunction(lambda i: self.T_Q[self.T[i]], (self.k,), dtype=int)  # particle charges
+		self.T, self.M, self.Q = assign_properties(self.t, self.k, self.N, self.T_M, self.T_Q)
 
 	def tree_flatten(self):
 		fields = asdict(self)
@@ -73,15 +73,58 @@ class ParticleSystem:
 		return cls(**aux_data, *children)
 
 	def initialize(self):
-		self.R = sample_lattice_points(self.n, self.k, replace=False)
+		"""Returns particle positions uniformly randomly sampled without replacement."""
+		return sample_lattice_points(self.n, self.k, replace=False)
+
+	def generate_brownian_field(self, steps=1):
+		"""Generates field values of Brownian fluctuations and the index of the starting set."""
+		num_samples = self.k * steps
+		samples = brownian_noise(self.key, self.beta, self.gamma, num_samples)
+		brownian_field = jnp.reshape(samples, (steps, self.k))
+		return brownian_field, 0
+
+	def generate_external_drive(self, steps=1):
+		"""Generates external field values at the top of the lattice and the index of the starting set."""
+		num_samples = self.n * steps
+		unmasked_samples = wien_approximation(self.key, self.beta, self.alpha, num_samples)
+		external_field = jnp.reshape(unmasked_samples, (steps, self.n))
+		return external_field, 0
 
 	def step(self):
 		pass
 
-	def particle_logdensity_function(self):
-		pass
+	def particle_logdensity_function(self, system_state, state, proposed_position):
+		R, brownian_field, bf_idx, external_field, ef_idx = system_state
+		i, position = state
+		mass, charge = self.M[i], self.Q[i]
 
-	def bound_state_logdensity_function(self):
+		# collect fields
+		brownian_field = brownian_field[bf_idx]
+		external_field = generate_drive_field(self.n, R, external_field[ef_idx], masked)
+
+		# compute particle path
+		path = canonical_shortest_path(position, proposed_position, self.n)
+
+		# assemble potential function
+		potential_func = partial(potential, R, self.Q, self.point_func, pauli_exclusion=self.pauli_exclusion)
+
+		# energy barrier
+		B_path = energy_barrier(i, path, potential_func, charge, self.energy_lower_bound)
+
+		# energy difference
+		delta_E = energy_difference(i, charge, position, proposed_position, potential_func)
+
+		# work
+		start_end = jnp.array((position, proposed_position), dtype=int)
+		brownian_work, total_brownian_work = calculate_work(start_end, brownian_field, jnp.sqrt(mass))
+		drive_work, total_drive_work = calculate_work(path, external_field, mass)
+		work = brownian_work + drive_work
+		total_work = total_brownian_work + total_drive_work
+
+		logdensity = beta * (brownian_work + drive_work - delta_E - B_path)
+		return logdensity, total_work
+
+	def bound_state_logdensity_function(self, system_state, state, proposed_position):
 		pass
 
 	def particle_proposal_generator(self, state, range_):
@@ -91,12 +134,21 @@ class ParticleSystem:
 		return uniform_boundstate_proposal_generator(self.key, state, self.R, range_, angular_range)
 
 
+### generate external and Brownian forces independent of main loop first
+
+
+def assign_properties(t, k, N, T_M, T_Q):
+	T = jnp.repeat(jnp.arange(t), N, total_repeat_length=self.k) 	# particle types
+	M = jnp.fromfunction(lambda i: T_M[T[i]], (k,), dtype=int)  	# particle masses
+	Q = jnp.fromfunction(lambda i: T_Q[T[i]], (k,), dtype=int)  	# particle charges
+	return T, M, Q
+
+
 @partial(jax.jit, static_argnums=[2])
 def sample_lattice_points(n, k, replace=False):
 	samples_1D = jax.random.choice(n**2, (k,), replace=replace)
 	samples = jnp.stack((samples_1D // n, samples_1D % n), axis=1)
 	return samples
-
 
 
 class FSInfo(NamedTuple):
