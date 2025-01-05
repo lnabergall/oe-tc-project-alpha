@@ -94,6 +94,7 @@ class ParticleSystem:
 		return external_field, 0
 
 	def system_update_data(self, system_data):
+		"""Particle-independent data needed for the update process."""
 		R, brownian_field, bf_idx, external_field, ef_idx = system_data
 
 		potential = potential_everywhere(R, self.Q, lattice_positions(self.n), self.point_func)
@@ -105,6 +106,7 @@ class ParticleSystem:
 		return potential, interaction_field, brownian_field, external_field
 
 	def particle_update_data(self, system_data, state):
+		"""Data needed for multiple particle-dependent functions of the update process."""
 		interaction_field, brownian_field, external_field = system_data
 		i, position = state
 		mass, charge = self.M[i], self.Q[i]
