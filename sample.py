@@ -30,6 +30,9 @@ class ParticleSystem:
 	beta: float 							# inverse temperature, 1/T
 	gamma: float							# collision coefficient
 
+	# kinetics
+	time_unit: float						# unit converting between velocity and distance in a timestep
+
 	# potential energy 
 	rho: float 								# range of the potential
 	point_func: callable 					# point function of the potential
@@ -90,23 +93,41 @@ class ParticleSystem:
 		external_field = jnp.reshape(unmasked_samples, (steps, self.n))
 		return external_field, 0
 
-	def step(self):
-		pass
+	def system_update_data(self, system_data):
+		R, brownian_field, bf_idx, external_field, ef_idx = system_data
 
-	def particle_logdensity_function(self, system_state, state, proposed_position):
-		R, brownian_field, bf_idx, external_field, ef_idx = system_state
+		potential = potential_everywhere(R, self.Q, lattice_positions(self.n), self.point_func)
+		interaction_field = generate_interaction_field(potential)
+
+		brownian_field = brownian_field[bf_idx]
+		external_field = generate_drive_field(self.n, R, external_field[ef_idx], masked)
+		
+		return potential, interaction_field, brownian_field, external_field
+
+	def particle_update_data(self, system_data, state):
+		interaction_field, brownian_field, external_field = system_data
 		i, position = state
 		mass, charge = self.M[i], self.Q[i]
 
-		# collect fields
-		brownian_field = brownian_field[bf_idx]
-		external_field = generate_drive_field(self.n, R, external_field[ef_idx], masked)
+		velocity_bound = compute_velocity_bound(position, interaction_field, brownian_field, 
+			external_field, mass, charge, self.gamma, self.time_unit)
+
+		return velocity_bound
+
+	def step(self):
+		pass
+
+	def particle_logdensity_function(self, system_data, state, proposed_position, velocity_bound):
+		R, interaction_field, brownian_field, external_field = system_data
+		i, position = state
+		mass, charge = self.M[i], self.Q[i]
 
 		# compute particle path
 		path = canonical_shortest_path(position, proposed_position, self.n)
 
 		# assemble potential function
-		potential_func = partial(potential, R, self.Q, self.point_func, pauli_exclusion=self.pauli_exclusion)
+		potential_func = partial(potential_at, R, self.Q, self.point_func, 
+								 pauli_exclusion=self.pauli_exclusion)
 
 		# energy barrier
 		B_path = energy_barrier(i, path, potential_func, charge, self.energy_lower_bound)
@@ -119,10 +140,12 @@ class ParticleSystem:
 		brownian_work, total_brownian_work = calculate_work(start_end, brownian_field, jnp.sqrt(mass))
 		drive_work, total_drive_work = calculate_work(path, external_field, mass)
 		work = brownian_work + drive_work
-		total_work = total_brownian_work + total_drive_work
+		total_work = calculate_total_work(total_brownian_work + total_drive_work, brownian_field, 
+										  external_field, mass, position, proposed_position, velocity_bound)
 
-		logdensity = beta * (brownian_work + drive_work - delta_E - B_path)
-		return logdensity, total_work
+		logdensity = beta * (work - delta_E - B_path)
+		# return both, for excess work and work appled even if proposal rejected
+		return logdensity, total_work, work 	
 
 	def bound_state_logdensity_function(self, system_state, state, proposed_position):
 		pass
@@ -132,9 +155,6 @@ class ParticleSystem:
 
 	def boundstate_proposal_generator(self, state, range_, angular_range):
 		return uniform_boundstate_proposal_generator(self.key, state, self.R, range_, angular_range)
-
-
-### generate external and Brownian forces independent of main loop first
 
 
 def assign_properties(t, k, N, T_M, T_Q):
