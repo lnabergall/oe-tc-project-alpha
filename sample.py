@@ -2,6 +2,7 @@ from typing import NamedTuple
 from datetime import date
 from functools import partial
 from dataclasses import dataclass, field, asdict
+from typing import NamedTuple
 
 import numpy as np
 
@@ -13,6 +14,29 @@ from physics import *
 
 
 key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+
+
+class SystemData(NamedTuple):
+	# system
+	R: jax.Array							# particle positions. 2D, kx2.
+
+	# fields
+	brownian_fields: jax.Array				# fields produced by Brownian fluctuations. 4D, axnxnx2.
+	bf_idx: int 							# index of the Brownian field for the current timestep 
+	external_fields: jax.Array				# top fields produced by external drive. 3D, bxnx2.
+	ef_idx: int 							# index of the external field for the current timestep
+	interaction_field: jax.Array			# field produced by the particle potential. 3D, nxnx2.
+	brownian_field: jax.Array				# field produced by Brownian fluctations. 3D, nxnx2. 
+	external_field: jax.Array				# field produced by external drive. 3D, nxnx2. 
+	slow_field: jax.Array					# field produced by 'slow' influences. 3D, nxnx2.
+	energy_field: jax.Array					# energy field produced by excitations. 3D, nxnx2. 
+	transfer_field: jax.Array				# field transferred to particles by other influences. 2D, kx2.
+
+	# bound states
+	bound_states: jax.Array 				# bound state index of each particle. 1D, k.
+	masses: jax.Array						# mass of each bound state. 1D, k, 0-padded.
+	coms: jax.Array							# center of mass of each bound state. 2D, kx2, 0-padded.
+	MOIs: jax.Array							# moment of inertia of each bound state. 1D, k, 0-padded.
 
 
 @register_pytree_node_class
@@ -33,10 +57,14 @@ class ParticleSystem:
 	# kinetics
 	time_unit: float						# unit converting between velocity and distance in a timestep
 
+	# energy
+	mu: float								# discernability threshold for energy
+
 	# potential energy 
-	rho: float 								# range of the potential
+	rho: int 								# range of the potential
 	point_func: callable 					# point function of the potential
 	energy_lower_bound: float				# lower bound for the potential energy of a particle
+	factor_limit: int						# upper bound for the number of particles with range of a point
 
 	# bonding 
 	bond_energy: float						# maximum energy defining a bond
@@ -45,10 +73,14 @@ class ParticleSystem:
 	alpha: float							# scale factor in Wien approximation to Planck's law
 
 	# radiation emission
+	epsilon: float 							# threshold constant of radiation emission
 	delta: float							# range of radiation emission
 
 	# stochasticity
 	key: jax.Array							# PRNG key for stochastic processes
+
+	# bookkeeping
+	pad_value: int 							# Scalar used for padding most arrays
 
 	### --- data fields with defaults ---
 
@@ -79,6 +111,9 @@ class ParticleSystem:
 		"""Returns particle positions uniformly randomly sampled without replacement."""
 		return sample_lattice_points(self.n, self.k, replace=False)
 
+	def step(self):
+		pass
+
 	def generate_brownian_field(self, steps=1):
 		"""Generates field values of Brownian fluctuations and the index of the starting set."""
 		num_samples = self.k * steps
@@ -93,34 +128,61 @@ class ParticleSystem:
 		external_field = jnp.reshape(unmasked_samples, (steps, self.n))
 		return external_field, 0
 
-	def system_update_data(self, system_data):
+	def system_update_data(self, data):
 		"""Particle-independent data needed for the update process."""
-		R, brownian_field, bf_idx, external_field, ef_idx = system_data
 
-		potential = potential_everywhere(R, self.Q, lattice_positions(self.n), self.point_func)
+		potential = potential_everywhere(data.R, self.Q, lattice_positions(self.n), self.point_func)
 		interaction_field = generate_interaction_field(potential)
 
-		brownian_field = brownian_field[bf_idx]
-		external_field = generate_drive_field(self.n, R, external_field[ef_idx], masked)
+		brownian_field = data.brownian_field[data.bf_idx]
+		external_field = generate_drive_field(self.n, data.R, data.external_field[data.ef_idx], masked)
 		
 		return potential, interaction_field, brownian_field, external_field
 
-	def particle_update_data(self, system_data, state):
+	def particle_update_data(self, data, state):
 		"""Data needed for multiple particle-dependent functions of the update process."""
-		interaction_field, brownian_field, external_field = system_data
 		i, position = state
 		mass, charge = self.M[i], self.Q[i]
 
-		velocity_bound = compute_velocity_bound(position, interaction_field, brownian_field, 
-			external_field, mass, charge, self.gamma, self.time_unit)
+		velocity_bound = compute_velocity_bound(position, data.interaction_field, data.slow_field, 
+			data.external_field, data.energy_field, mass, charge, self.gamma, self.time_unit)
 
 		return velocity_bound
 
-	def step(self):
-		pass
+	def determine_bound_states(self, data):
+		"""Determines all bounds states from scratch."""
+		R = data.R
+		potential_energy_factors_fn = jax.vmap(
+			potential_energy_factors, in_axes=(0, None, None, None, None, None))
+		bonds_fn = jax.vmap(compute_bonds, in_axes=(0, 0, 0, None, None))
+		I = jnp.arange(self.k)
 
-	def particle_logdensity_function(self, system_data, state, proposed_position, velocity_bound):
-		R, interaction_field, brownian_field, external_field = system_data
+		all_energy_factors, all_factor_indices = potential_energy_factors_fn(
+			I, R, self.Q, self.point_func, self.pad_value, self.factor_limit)
+		all_bonds = compute_bonds_fn(
+			I, all_energy_factors, all_factor_indices, self.bond_energy, self.pad_value)
+
+		bound_states = compute_bound_states(all_bonds, self.pad_value)
+		coms, masses = centers_of_mass(R, bound_states, self.M, self.pad_value)
+		MOIs = moments_of_inertia(R, coms, bound_states, self.M, self.pad_value)
+
+		return bound_states, masses, coms, MOIs
+
+	def generate_transfer_field(self, data, states):
+		I, positions, accepted_positions = state
+
+		end_field_fn = jax.vmap(calculate_end_field, in_axes=(None, None, None, None, 0, 0, 0, None))
+		net_field = end_field_fn(data.slow_field, data.external_field, data.energy_field, 
+								 data.transfer_field, I, positions, accepted_positions, self.gamma)
+
+		transfer_field, torques = generate_full_transferred_field(
+			I, net_field, data.R, data.bound_states, data.masses, data.coms, data.MOIs, self.pad_value)
+
+		return transfer_field, torques
+
+
+	def particle_logdensity_function(self, data, state, proposed_position, velocity_bound):
+		# slow_field = brownian_field + transfer_field + any other slow influences
 		i, position = state
 		mass, charge = self.M[i], self.Q[i]
 
@@ -128,7 +190,7 @@ class ParticleSystem:
 		path = canonical_shortest_path(position, proposed_position, self.n)
 
 		# assemble potential function
-		potential_func = partial(potential_at, R, self.Q, self.point_func, 
+		potential_func = partial(potential_at, data.R, self.Q, self.point_func, 
 								 pauli_exclusion=self.pauli_exclusion)
 
 		# energy barrier
@@ -138,18 +200,19 @@ class ParticleSystem:
 		delta_E = energy_difference(i, charge, position, proposed_position, potential_func)
 
 		# work
-		start_end = jnp.array((position, proposed_position), dtype=int)
-		brownian_work, total_brownian_work = calculate_work(start_end, brownian_field, jnp.sqrt(mass))
-		drive_work, total_drive_work = calculate_work(path, external_field, mass)
-		work = brownian_work + drive_work
-		total_work = calculate_total_work(total_brownian_work + total_drive_work, brownian_field, 
-										  external_field, mass, position, proposed_position, velocity_bound)
+		start_end = jnp.array((position, proposed_position, -1), dtype=int)
+		slow_work, total_slow_work = calculate_work(start_end, data.slow_field, jnp.sqrt(mass))
+		drive_work, total_drive_work = calculate_work(path, data.external_field, mass)
+		excitation_work, total_excitation_work = calculate_excitation_work(position, proposed_position, data.energy_field)
+		work = slow_work + drive_work + excitation_work
+		total_work = calculate_total_work(total_slow_work + total_drive_work + total_excitation_work, 
+			data.slow_field, data.external_field, mass, position, proposed_position, velocity_bound)
 
 		logdensity = beta * (work - delta_E - B_path)
-		# return both, for excess work and work appled even if proposal rejected
-		return logdensity, total_work, work 	
+		# return both, for excess work and work applied even if proposal rejected
+		return logdensity, work, total_work
 
-	def bound_state_logdensity_function(self, system_state, state, proposed_position):
+	def bound_state_logdensity_function(self, data, state, proposed_position):
 		pass
 
 	def particle_proposal_generator(self, state, range_):
@@ -157,6 +220,10 @@ class ParticleSystem:
 
 	def boundstate_proposal_generator(self, state, range_, angular_range):
 		return uniform_boundstate_proposal_generator(self.key, state, self.R, range_, angular_range)
+
+
+### calculate end fields and such after log-density function because proposal might be rejected 
+### calculate energy fields for the next update step
 
 
 def assign_properties(t, k, N, T_M, T_Q):
