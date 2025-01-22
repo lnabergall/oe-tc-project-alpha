@@ -2,6 +2,27 @@ import jax
 import jax.numpy as jnp
 
 
+def ith_nonzero_index(A, i):
+	"""Gets the index of the ith nonzero element of a 1D boolean array 'A'."""
+	cumsums = jnp.cumsum(A)
+	return jnp.searchsorted(cumsums, i + 1, side='left')
+
+
+def unravel_2Dindex(i, dim2):
+	"""Convert a single raveled index 'i' into 2D indices under shape (dim1, dim2)."""
+	return jnp.array((i // dim2, i % dim2))
+
+
+def remove_rows_jit(A, I, pad_value=-1)
+	k = A.shape[0]
+	I = jnp.where(I == pad_value, k+1, I)
+	keep_mask = jnp.ones((k,), dtype=bool)
+	keep_mask = keep_mask.at[I].set(False, mode="drop")
+	keep_indices = jnp.where(keep_mask, size=k, fill_value=k+1)
+	A_minus = A.at[keep_indices].get(mode="fill", fill_value=pad_value)
+	return A_minus
+
+
 def bfs(edges, i, pad_value):
 	"""
 	Perform a breadth-first search on the array 'edges'. 
