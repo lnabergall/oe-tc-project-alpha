@@ -301,8 +301,8 @@ class ParticleSystem:
 		# energy difference, all particles 
 		energies = potential_energy_func(data.R, self.Q)
 		proposal_energies = potential_energy_func(R_proposed, self.Q)
-		deltaE_by_particle = particle_mask * (proposal_energies - energies) 	# mask probably not needed
-		deltaE = jnp.zeros(I.shape).at[molecule_indices].add(deltaE_by_particle)
+		deltaEs_by_particle = particle_mask * (proposal_energies - energies) 	# mask probably not needed
+		deltaEs = jnp.zeros(I.shape).at[molecule_indices].add(deltaEs_by_particle)
 
 		# energy barrier, all particle paths
 		energy_barrier_fn = jax.vmap(energy_barrier, in_axes=(0, None, 0, 0, None))
@@ -310,14 +310,14 @@ class ParticleSystem:
 		B_paths_by_particle = energy_barrier_fn(
 			particle_paths_nofilter, potential_energy_func, 
 			max_boundary_energies, self.Q, self.energy_lower_bound)
-		B_paths = jnp.zeros(I.shape).at[molecule_indices].add(energy_barriers_by_particle)
+		B_paths = jnp.zeros(I.shape).at[molecule_indices].add(B_paths_by_particle)
 
 		# work, com + orientation only
 		work_fn = jax.vmap(calculate_boundstate_work, in_axes=(0, None, None, None, 0, 0, 0))
 		works, total_forces, total_torques = work_fn(I, data.bound_states, data.net_field, data.R, 
 													 coms, proposed_coms, proposed_orientations)
 
-		logdensities = self.beta * (works - deltaE - B_paths)
+		logdensities = self.beta * (works - deltaEs - B_paths)
 		return logdensities, works, energies, proposal_energies, total_forces, total_torques 
 
 	def particle_proposal_sampler(self, data, state, key, range_, num_samples=1):
