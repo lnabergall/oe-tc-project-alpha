@@ -23,6 +23,11 @@ def remove_rows_jit(A, I, pad_value=-1)
 	return A_minus
 
 
+def normalize(A):
+	"""Normalize an array A of vectors."""
+	return A / jnp.linalg.vector_norm(A, axis=-1, keepdims=True)
+
+
 def bfs(edges, i, pad_value):
 	"""
 	Perform a breadth-first search on the array 'edges'. 

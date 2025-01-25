@@ -10,7 +10,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from utils import bfs
+from utils import *
+from geometry import *
 
 
 def violates_strong_pauli_exclusion(R):
@@ -24,139 +25,6 @@ def violates_pauli_exclusion(q_point, q):
 	too_many_particles = jnp.count_nonzero(q_point) >= 2
 	like_charges = jnp.any(q_point == q)
 	return too_many_particles | like_charges
-
-
-def normalize(A):
-	"""Normalize an array of vectors."""
-	return A / jnp.linalg.vector_norm(A, axis=-1, keepdims=True)
-
-
-@jax.jit
-def lattice_distance(r, s):
-	"""Compute lattice distance between points r and s."""
-	return jnp.linalg.norm(r - s, ord=1, axis=-1)
-
-
-@jax.jit
-def lattice_distances(r, S):
-	"""
-	Compute lattice distance between point r and every point in the array S.
-	The last dimension of S should have the same size as r. 
-	"""
-	return jnp.linalg.norm(r - S, axis=-1)
-
-
-def canonical_shortest_path(r_start, r_end, n):
-	"""
-	Returns a canonical shortest path between r_start and r_end, where we take 
-	a staircase path until we reach a straight line to r_end. 
-	"""
-	r_diff = r_end - r_start
-	r_diff_sign = jnp.sign(r_diff)
-	r_diff_abs = jnp.abs(r_diff)
-	length = jnp.sum(r_diff_abs)
-	i_square_half = jnp.abs(jnp.min(r_diff))
-	i_square *= 2
-	element_square = r_start + (r_diff_sign * jnp.array((i_square_half, i_square_half)))
-	step_outside_square = jnp.where(
-		r_diff_abs[0] >= r_diff_abs[1], jnp.array([1, 0]), jnp.array([0, 1]))
-	padding = jnp.array((-1, -1), dtype=int)
-
-	def path_creator(i, j):
-		half, parity = i // 2, i % 2
-		i_diff = i - i_square
-		element_within_square = r_start + (r_diff_sign * jnp.array((half + parity, half)))
-		element_outside_square = element_square + (i_diff * step_outside_square)
-		element_on_path = jax.lax.select_n(
-			i <= i_square, element_outside_square, element_within_square)
-		element = jax.lax.select_n(i > length, element_on_path, padding)
-		return element
-
-	path = jnp.fromfunction(path_creator, (n, 2), dtype=int)
-	return path
-
-
-def shift_path(path, r): 
-	return path + r - path[0]
-
-
-def append_on_path(path, r):
-	insert_id = jnp.argmin(path, axis=0)[0]
-	return jnp.insert(path, insert_id, r, axis=0)
-
-
-def lattice_positions(n):
-	return jnp.stack(jnp.indices((n, n)), axis=-1)
-
-
-def boundaries(r, delta):
-	#### THIS IS WRONG, NOT PERIODIC
-	x, y = r
-	min_x = jnp.clip(x - delta, min=0)
-	min_y = jnp.clip(y - delta, min=0)
-	max_x, max_y = x + delta, y + delta
-	return min_x, max_x, min_y, max_y
-
-
-def centered_square(L, r, delta):
-	"""
-	Generate the subset of the lattice 'L' consisting of a square of radius 'delta' centered at 'r',
-	along with the positions in that subset.  
-	"""
-	min_x, max_x, min_y, max_y = boundaries(r, delta)
-	square = L[min_x: max_x+1, min_y: max_y+1]
-	x_positions = jnp.arange(min_x, max_x+1)
-	y_positions = jnp.arange(min_y, max_y+1)
-	positions = jnp.stack(jnp.meshgrid(x_indices, y_indices, indexing="ij"), axis=-1)
-	return square, positions
-
-
-@partial(jax.jit, static_argnums=[3])
-def generate_lattice(R, n, pad_value, sites=3):
-	"""
-	Generate the occupation lattice corresponding to R. The lattice is nxnxsites, 
-	with 'sites' slots per position of the lattice, to accomodate test positions; 
-	occupation is indicated by a particle index in one of the slots. 
-	"""
-	k = R.shape[0]
-	L = jnp.full((n, n, sites), pad_value, dtype=int)
-	counts = jnp.zeros((n, n), dtype=int)
-
-	def particle_fn(L, counts, i, x, y):
-		idx = counts[x, y]
-		L = L.at[x, y, idx].set(i)
-		counts = counts.at[x, y].add(1)
-		return (L, counts)
-
-	def padding_fn(L, counts, *args):
-		return L, counts
-
-	def map_point(i, args):
-		L, counts = args
-		x, y = R[i, 0], R[i, 1]
-		return jax.lax.cond(x == pad_value, padding_fn, particle_fn, L, counts, i, x, y)
-
-	L, _ = jax.lax.fori_loop(0, k, map_point, (L, counts))
-	return L
-
-
-def unlabel_lattice(L, pad_value):
-	return jnp.sum(L != pad_value, axis=-1)
-
-
-def generate_unlabeled_lattice(R, n):
-	"""
-	Generate the unlabeled occupation lattice corresponding to R. The lattice is an nxn Array; 
-	occupation is indicated by 0, 1, or 2, indicating the number of particles in the site. 
-	"""
-	L = jnp.zeros((n, n), dtype=int)
-	L = L.at[R[:, 0], R[:, 1]].add(1)
-	return L
-
-
-def generate_property_lattice(L, C, pad_value):
-	"""Gather property values from a 1D Array C using indices in an Array L while ignoring padding."""
-	return jnp.where(L != pad_value, C[L], pad_value)
 
 
 def potential_everywhere(R, Q, positions, point_func):
@@ -540,14 +408,14 @@ def planck(key, beta, alpha, delta, theta, M, num_samples):
 	keys = jax.random.split(key, num=num_samples)
 
 	@jax.jit
-	def sample_gamma(data):
+	def sample_gamma_fn(data):
 		key, _ = data
 		key, subkey = jax.random.split(key)
 		F = jnp.exp(jax.random.loggamma(subkey, 4)) * theta
 		return key, F
 
 	@jax.jit
-	def sample(key):
+	def sample_fn(key):
 
 		@jax.jit
 		def reject_fn(data):
@@ -559,11 +427,11 @@ def planck(key, beta, alpha, delta, theta, M, num_samples):
 			u = jax.random.uniform(subkey)
 			return u >= accept_ratio
 
-		key, F = sample_gamma((key, 0))
-		_, F = jax.lax.while_loop(reject_fn, sample_gamma, (key, F))
+		key, F = sample_gamma_fn((key, 0))
+		_, F = jax.lax.while_loop(reject_fn, sample_gamma_fn, (key, F))
 		return F
 
-	samples = jax.vmap(sample)(keys)
+	samples = jax.vmap(sample_fn)(keys)
 	return samples
 
 
@@ -572,10 +440,10 @@ def wien_approximation(key, beta, alpha, num_samples):
 	keys = jax.random.split(key, num=num_samples)
 
 	@jax.jit
-	def sample(key):
+	def sample_fn(key):
 		return jnp.exp(jax.random.loggamma(key, 4) - jnp.log(alpha) - jnp.log(beta))
 
-	samples = jax.vmap(sample)(keys)
+	samples = jax.vmap(sample_fn)(keys)
 	return samples
 
 
@@ -618,10 +486,10 @@ def brownian_noise(key, beta, gamma, num_samples):
 	keys = jax.random.split(key, num=num_samples)
 
 	@jax.jit
-	def sample(key):
+	def sample_fn(key):
 		return jnp.sqrt(2*gamma / beta) * jax.jax.random.normal(key)
 
-	samples = jax.vmap(sample)(keys)
+	samples = jax.vmap(sample_fn)(keys)
 	return samples
 
 
@@ -633,7 +501,7 @@ def compute_velocity_bound(i, r, interaction_field, brownian_field, external_fie
 	nontransfer_velocity = nontransfer_force / (gamma * mass)
 	transfer_velocity = transfer_force / (gamma * molecule_mass)
 	distance = jnp.linalg.vector_norm(nontransfer_velocity + transfer_velocity) * time_unit
-	distance += jnp.sqrt(2 * energy_field[r] / mass) * time_unit
+	distance += jnp.sqrt(2 * energy_field[i] / mass) * time_unit
 	return distance
 
 
@@ -663,6 +531,13 @@ def energy_barrier(path, potential_energy_func, max_boundary_energy, coupling_co
 	max_energy = jax.lax.fori_loop(1, end, step_fn, lower_bound)
 	max_energy = jnp.max(jnp.array((max_energy, max_boundary_energy)))
 	return max_energy - max_boundary_energy
+
+
+def calculate_work_step(r_start, r_end, field, coupling_constant):
+	delta = r_end - r_start
+	work = jnp.dot(field, delta)
+	total_work = jnp.linalg.vector_norm(field) * jnp.linalg.vector_norm(delta)
+	return work, total_work
 
 
 def calculate_work(path, field, coupling_constant):
@@ -713,31 +588,53 @@ def calculate_work_v2(path, field, coupling_constant):
 	steps = jnp.diff(path, axis=0)
 	end = jnp.argmin(path, axis=0)[0] - 1
 
-	def work_step(r, delta):
+	def get_work_step(r, delta):
 		return jnp.dot(field[r], delta)
 
-	work_steps = jax.vmap(work_step)(path, steps)
+	work_steps = jax.vmap(get_work_step)(path, steps)
 	work_steps[end] = 0		# to remove contribution from last fake delta
 	work = jnp.sum(work_steps)
 
 	return coupling_constant * work 	# multiply coupling at the end for efficiency
 
 
-def calculate_total_work(total_path_work, brownian_field, slow_field, 
-						 external_field, mass, r_start, r_end, d):
+def calculate_total_work(total_path_work, brownian_field, external_field, 
+						 transfer_field, i, mass, r_start, r_end, d):
 	diff_norm = jnp.linalg.norm(r_end - r_start)
 	excess_force_magnitude = mass * (jnp.linalg.norm(external_field[r_end]) 
-							 		 + jnp.linalg.norm(slow_field[r_start]))
+							 		 + jnp.linalg.norm(transfer_field[i]))
 	excess_force_magnitude += jnp.sqrt(mass) * jnp.linalg.norm(brownian_field[r_start])
 	total_work = total_path_work + (excess_force_magnitude * (d - diff_norm))
 	return total_work
 
 
-def calculate_end_field(brownian_field, slow_field, external_field, 
-						energy_field, transfer_field, i, r_start, r_end, gamma):
-	extra_field = jnp.sqrt(2 * energy_field[r_start] / mass) * gamma
-	return (brownian_field[r_start] + slow_field[r_start] 
-			+ external_field[r_end] + extra_field + transfer_field[i])
+def calculate_boundstate_work(self, i, bound_states, net_field, R, start_com, end_com, end_theta):
+	particle_mask = bound_states == i
+
+	# total force
+	forces = self.M * particle_mask * net_field
+	total_force = jnp.sum(forces, axis=0)
+
+	# translation work
+	delta = end_com - start_com
+	translate_work = jnp.dot(total_force, delta)
+
+	# total torque
+	torques = calculate_torque(R, start_com, forces)
+	total_torque = jnp.sum(torques, axis=0)
+
+	# rotation work
+	rotate_work = jnp.dot(total_torque, jnp.deg2rad(end_theta))
+
+	work = translate_work + rotate_work
+	return work, total_force, total_torque
+
+
+def calculate_end_field(brownian_field, external_field, energy_field, 
+						transfer_field, i, r_start, r_end, mass, gamma):
+	extra_field = jnp.sqrt(2 * energy_field[i] / mass) * gamma
+	return ((brownian_field[r_start] / jnp.sqrt(mass)) + external_field[r_end] 
+			+ extra_field + transfer_field[i])
 
 
 def calculate_torque(r, r_axis, f_vector):
@@ -762,7 +659,7 @@ def generate_full_transferred_field(I, net_field, R, bound_states, masses, coms,
 	I
 		Array of particle indices specifying a subset of the particles. 1D, l, pad_value-padded.
 	net_field
-		Array giving a field experienced by each particle in its current state. 2D, kx2. 
+		Array giving the field experienced by each particle in its current state. 2D, kx2. 
 	R
 		Array of particle positions. 2D, kx2. 
 	bound_states
@@ -788,9 +685,10 @@ def generate_full_transferred_field(I, net_field, R, bound_states, masses, coms,
 
 	field_parts, weighted_torques, torque_field_parts = jax.vmap(source_factors)(I)
 	molecules_I = bound_states[I]
+	pad_mask = I != pad_value
 
 	def collect_by_molecule(i):
-		particles_mask = (I != pad_value) & (molecules_I == i)
+		particles_mask = pad_mask & (molecules_I == i)
 		field_part = jnp.sum(particles_mask * field_parts, axis=0)
 		weighted_torque = jnp.sum(particles_mask * weighted_torques, axis=0)
 		torque_field_part = jnp.sum(particles_mask * torque_field_parts, axis=0)
@@ -813,28 +711,6 @@ def generate_full_transferred_field(I, net_field, R, bound_states, masses, coms,
 
 def transfer_mask(excess_works, potential_energies, epilson):
 	return excess_works < epsilon * potential_energies
-
-
-def calculate_boundstate_work(self, i, bound_states, net_field, R, start_com, end_com, end_theta):
-	particle_mask = bound_states == i
-
-	# total force
-	forces = self.M * particle_mask * net_field
-	total_force = jnp.sum(forces, axis=0)
-
-	# translation work
-	delta = end_com - start_com
-	translate_work = jnp.dot(total_force, delta)
-
-	# total torque
-	torques = calculate_torque(R, start_com, forces)
-	total_torque = jnp.sum(torques, axis=0)
-
-	# rotation work
-	rotate_work = jnp.dot(total_torque, jnp.deg2rad(end_theta))
-
-	work = translate_work + rotate_work
-	return work, total_force, total_torque
 
 
 def calculate_excitations(i, R, L, work, delta):
@@ -905,13 +781,13 @@ def merge_excitations(R, L, excitation_arrays, position_arrays):
 	return energy_field
 
 
-def calculate_excitation_work(r_start, r_end, energy_field):
+def calculate_excitation_work(i, r_start, r_end, energy_field):
 	"""
 	Calculates the absorbed work and total work produced by an energy field on a particle 
 	travelling from 'r_start' to 'r_end'. 
 	"""
 	update_vec = r_end - r_start
-	excitation = energy_field[r_start]
+	excitation = energy_field[i]
 	energy = jnp.linalg.vector_norm(excitation)
 	excitation_work = jnp.max(jnp.array(jnp.dot(excitation, update_vec), energy))
 	total_excitation_work = jnp.linalg.vector_norm(excitation)
