@@ -162,13 +162,14 @@ class ParticleSystem:
 		L, LQ, bound_states, masses, coms, MOIs = self.determine_bound_states(data, I)
 		data = data._replace(L=L, LQ=LQ, bound_states=bound_states, masses=masses, coms=coms, MOIs=MOIs)
 		state_extra = (state[0], I_mask, state[1], accepted_positions)
-		transfer_field, net_field = self.generate_transfer_field(
+		transfer_field, net_field, energy_field = self.generate_transfer_field(
 			data, state_extra, excess_works, potential_energies)
+		data = data._replace(potential=potential, transfer_field=transfer_field, 
+							 net_field=net_field, energy_field=energy_field)
 
 		# generate new excitations and update data
 		energy_field = self.generate_excitations(data, I, excess_works, potential_energies)
-		data = data._replace(potential=potential, transfer_field=transfer_field, 
-							 net_field=net_field, energy_field=energy_field)
+		data = data._replace(energy_field=energy_field)
 
 		return (data, accepted_positions, logdensities, works, 
 				total_works, energies, proposal_energies, sample_info)
@@ -265,16 +266,18 @@ class ParticleSystem:
 		end_field = end_field_fn(data.brownian_field, data.external_field, data.energy_field, 
 			data.transfer_field, I, positions, accepted_positions, self.M[I], self.gamma)
 		net_field = data.net_field.at[I_mask].set(end_field)
+		new_transfer_field = data.transfer_field.at[I_mask].set(0.0)
+		energy_field = data.energy_field.at[I_mask].set(0.0)
 
 		transfer_field = generate_full_transferred_field(
 			I, net_field, data.R, data.bound_states, data.masses, data.coms, data.MOIs, self.pad_value)
+		net_field = net_field.at[I_mask].set(0.0)
 		transfer_field = transfer_field.at[:, :].multiply(
 			transfer_mask(excess_works, potential_energies, self.epsilon))
 		net_field = net_field.at[:, :].add(transfer_field)
-		net_field = net_field.at[I_mask].set(0.0)  	# zero-out net field for transfer source particles
-		transfer_field = transfer_field.at[:, :].add(data.transfer_field) 
+		transfer_field = transfer_field.at[:, :].add(new_transfer_field) 
 
-		return transfer_field, net_field
+		return transfer_field, net_field, energy_field
 
 	def generate_excitations(self, data, I, excess_works, potential_energies):
 		"""Generate new excitations, which are added to the energy field."""
