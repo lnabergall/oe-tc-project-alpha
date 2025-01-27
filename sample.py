@@ -253,8 +253,8 @@ class ParticleSystem:
 			self.I, all_energy_factors, all_factor_indices, self.bond_energy, self.pad_value)
 
 		bound_states = compute_bound_states(all_bonds, self.pad_value)
-		coms, masses = centers_of_mass(R, bound_states, self.M, self.pad_value)
-		MOIs = moments_of_inertia(R, coms, bound_states, self.M, self.pad_value)
+		coms, masses = centers_of_mass(R, self.M, bound_states, self.n)
+		MOIs = moments_of_inertia(R, self.M, coms, bound_states, self.n)
 
 		return L, LQ, bound_states, masses, coms, MOIs
 
@@ -303,7 +303,7 @@ class ParticleSystem:
 		mass, charge = self.M[i], self.Q[i]
 
 		# compute particle path
-		path = canonical_shortest_path(position, proposed_position, self.n)
+		path = canonical_shortest_path(position, proposed_position, self.n, self.pad_value)
 
 		# assemble potential function
 		potential_energy_func = make_potential_energy_func(
@@ -348,7 +348,8 @@ class ParticleSystem:
 		masses, coms, MOIs = data.masses[I], data.coms[I], data.MOIs[I]
 
 		# compute molecule path, first translation then add rotation at the end
-		com_paths = jax.vmap(canonical_shortest_path, in_axes=(0, 0, None))(coms, proposed_coms, self.n)
+		com_paths = jax.vmap(canonical_shortest_path, in_axes=(0, 0, None, None))(
+			coms, proposed_coms, self.n, self.pad_value)
 		com_paths_byparticle = com_paths[molecule_indices]
 		particle_paths_nospin_nofilter = jax.vmap(shift_path)(com_paths_byparticle, data.R)
 		particle_paths_nofilter = jax.vmap(append_on_path)(particle_paths_nospin_nofilter, R_proposed)
@@ -404,10 +405,10 @@ class ParticleSystem:
 		q = self.Q[i]
 		Lr_square, Lr_square_positions = centered_square(data.L_test, position, range_)
 		Qr_square, _ = centered_square(data.LQ_test, position, range_)
-		distances = lattice_distances(r, Lr_square_positions)
+		distances = lattice_distances_2D(r, Lr_square_positions, self.n)
 
 		# determine possible positions
-		invalid_fn = jax.vmap(jax.vmap(violates_pauli_exclusion, (0, None), 0), (1, None), 0)
+		invalid_fn = jax.vmap(jax.vmap(violates_pauli_exclusion, (0, None)), (1, None))
 		valid_mask = (distances <= range_) & ~invalid_fn(Qr_square, q)
 		valid_count = jnp.sum(valid_mask)
 

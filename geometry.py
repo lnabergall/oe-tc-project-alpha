@@ -1,49 +1,71 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 
 
-@jax.jit
-def lattice_distance(r, s):
+@partial(jax.jit, static_argnums=[1])
+def periodic_norm(x_diff, n):
+	return jnp.min(jnp.stack((x_diff, n - x_diff)))
+
+
+@partial(jax.jit, static_argnums=[2])
+def lattice_distance(r, s, n):
 	"""Compute lattice distance between points r and s."""
-	return jnp.linalg.norm(r - s, ord=1, axis=-1)
+	diff = jnp.abs(r - s)
+	y_norm = diff[1]
+	x_diff = diff[0]
+	x_norm = periodic_norm(x_diff)
+	norm = x_norm + y_norm
+	return norm
 
 
-@jax.jit
-def lattice_distances(r, S):
-	"""
-	Compute lattice distance between point r and every point in the array S.
-	The last dimension of S should have the same size as r. 
-	"""
-	return jnp.linalg.norm(r - S, axis=-1)
+lattice_distances = jax.vmap(lattice_distance, (0, 0, None))
+lattice_distances_1D = jax.vmap(lattice_distance, (None, 0, None))
+lattice_distances_2D = jax.vmap(lattice_distances_1D, (None, 1, None))
 
 
-def canonical_shortest_path(r_start, r_end, n):
+def using_periodicity(x_diff, n):
+	return (n - x_diff) <= x_diff
+
+
+@partial(jax.jit, static_argnums=[2, 3])
+def canonical_shortest_path(r_start, r_end, n, pad_value):
 	"""
 	Returns a canonical shortest path between r_start and r_end, where we take 
 	a staircase path until we reach a straight line to r_end. 
 	"""
+	# first change r_start labeling to account for periodic x-dim
+	x_diff = jnp.abs(r_end - r_start)[0]
+	x_start = r_start[0]
+	x_new = jnp.where(x_start > n // 2, x_start - n, x_start + n)
+	x_new = jnp.where(using_periodicity(x_diff, n), x_new, x_start)
+	r_start = r_start.at[0].set(x_new)
+
 	r_diff = r_end - r_start
 	r_diff_sign = jnp.sign(r_diff)
 	r_diff_abs = jnp.abs(r_diff)
 	length = jnp.sum(r_diff_abs)
-	i_square_half = jnp.abs(jnp.min(r_diff))
-	i_square *= 2
-	element_square = r_start + (r_diff_sign * jnp.array((i_square_half, i_square_half)))
-	step_outside_square = jnp.where(
-		r_diff_abs[0] >= r_diff_abs[1], jnp.array([1, 0]), jnp.array([0, 1]))
-	padding = jnp.array((-1, -1), dtype=int)
 
-	def path_creator(i, j):
+	i_square_half = jnp.min(r_diff_abs)
+	i_square = 2 * i_square_half 
+	element_square = r_start + (r_diff_sign * jnp.array((i_square_half, i_square_half)))
+	step_outside_square = r_diff_sign * jnp.where(
+		r_diff_abs[0] >= r_diff_abs[1], jnp.array([1, 0]), jnp.array([0, 1]))
+	padding = jnp.full(2, pad_value, dtype=int)
+
+	def path_creator(i):
 		half, parity = i // 2, i % 2
 		i_diff = i - i_square
 		element_within_square = r_start + (r_diff_sign * jnp.array((half + parity, half)))
 		element_outside_square = element_square + (i_diff * step_outside_square)
-		element_on_path = jax.lax.select_n(
-			i <= i_square, element_outside_square, element_within_square)
-		element = jax.lax.select_n(i > length, element_on_path, padding)
+		# mod n here to account for periodicity
+		element_on_path = jax.lax.select(
+			i <= i_square, element_within_square, element_outside_square) % n 	
+		element = jax.lax.select(i <= length, element_on_path, padding)
 		return element
 
-	path = jnp.fromfunction(path_creator, (n, 2), dtype=int)
+	path = jnp.fromfunction(path_creator, (n,), dtype=int)
 	return path
 
 
@@ -60,13 +82,13 @@ def lattice_positions(n):
 	return jnp.stack(jnp.indices((n, n)), axis=-1)
 
 
-def boundaries(r, delta):
-	#### THIS IS WRONG, NOT PERIODIC
+def square_indices(r, delta, n):
 	x, y = r
-	min_x = jnp.clip(x - delta, min=0)
-	min_y = jnp.clip(y - delta, min=0)
-	max_x, max_y = x + delta, y + delta
-	return min_x, max_x, min_y, max_y
+	diameter = 2 * delta
+	row_indices = (y + jnp.arange(-delta, delta + 1)) % n
+	col_start = jnp.clip(x - delta, 0, n - diameter)
+	col_indices = jnp.arange(col_start, col_start + diameter)
+	return row_indices, col_indices
 
 
 def centered_square(L, r, delta):
@@ -74,10 +96,9 @@ def centered_square(L, r, delta):
 	Generate the subset of the lattice 'L' consisting of a square of radius 'delta' centered at 'r',
 	along with the positions in that subset.  
 	"""
-	min_x, max_x, min_y, max_y = boundaries(r, delta)
-	square = L[min_x: max_x+1, min_y: max_y+1]
-	x_positions = jnp.arange(min_x, max_x+1)
-	y_positions = jnp.arange(min_y, max_y+1)
+	n = L.shape[0]
+	x_indices, y_indices = square_indices(r, delta, n)
+	square = L[x_indices[:, None], y_indices[None, :]]
 	positions = jnp.stack(jnp.meshgrid(x_indices, y_indices, indexing="ij"), axis=-1)
 	return square, positions
 
