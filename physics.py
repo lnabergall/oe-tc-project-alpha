@@ -495,16 +495,39 @@ def brownian_noise(key, beta, gamma, num_samples):
 	return samples
 
 
-def compute_velocity_bound(i, r, interaction_field, brownian_field, external_field, energy_field, 
-						   transfer_field, mass, charge, molecule_mass, gamma, time_unit):
+def compute_particle_velocity_bound(i, r, interaction_field, brownian_field, external_field, energy_field, 
+						   			transfer_field, mass, charge, molecule_mass, gamma, time_unit):
 	nontransfer_force = ((charge * interaction_field[r]) + (mass * external_field[r]) 
 						 + (jnp.sqrt(mass) * brownian_field[r]))
 	transfer_force = mass * transfer_field[i]
 	nontransfer_velocity = nontransfer_force / (gamma * mass)
 	transfer_velocity = transfer_force / (gamma * molecule_mass)
-	distance = jnp.linalg.vector_norm(nontransfer_velocity + transfer_velocity) * time_unit
-	distance += jnp.sqrt(2 * energy_field[i] / mass) * time_unit
+	energy_velocity = jnp.sqrt(2 * energy_field[i] / mass)
+	speed = jnp.linalg.vector_norm(nontransfer_velocity + transfer_velocity + energy_velocity)
+	distance = speed * time_unit
 	return distance
+
+
+def compute_linear_velocity_bound(I, R, bound_states, interaction_field, net_field, 
+								  energy_field, masses, M, Q, gamma, time_unit):
+	masses_by_particle = masses[bound_states]
+	interact_velocities_by_particle = Q * interaction_field[R] / (gamma * masses_by_particle)
+	energy_velocities_by_particle = jnp.sqrt(2 * energy_field / M)
+	other_velocities_by_particle = M * net_field / (gamma * masses_by_particle)
+
+	def sum_velocity(i):
+		particle_mask = bound_states == i 
+		net_velocities = (interact_velocities_by_particle + energy_velocities_by_particle 
+						  + other_velocities_by_particle)
+		return jnp.sum(particle_mask * net_velocities, axis=0)
+
+	velocities = jax.vmap(sum_velocity)(I)
+	distances = jnp.linalg.vector_norm(velocities, axis=-1) * time_unit
+	return distances
+
+
+def compute_angular_velocity_bound():
+	pass
 
 
 def energy_barrier(path, potential_energy_func, max_boundary_energy, coupling_constant, lower_bound):
@@ -610,11 +633,11 @@ def calculate_total_work(total_path_work, brownian_field, external_field,
 	return total_work
 
 
-def calculate_boundstate_work(self, i, bound_states, net_field, R, start_com, end_com, end_theta):
+def calculate_boundstate_work(i, bound_states, net_field, R, M, start_com, end_com, end_theta):
 	particle_mask = bound_states == i
 
 	# total force
-	forces = self.M * particle_mask * net_field
+	forces = M * particle_mask * net_field
 	total_force = jnp.sum(forces, axis=0)
 
 	# translation work

@@ -162,20 +162,20 @@ class ParticleSystem:
 		L, LQ, bound_states, masses, coms, MOIs = self.determine_bound_states(data, I)
 		data = data._replace(L=L, LQ=LQ, bound_states=bound_states, masses=masses, coms=coms, MOIs=MOIs)
 		state_extra = (state[0], I_mask, state[1], accepted_positions)
-		transfer_field, net_field, energy_field = self.generate_transfer_field(
+		transfer_field, net_field = self.generate_transfer_field(
 			data, state_extra, excess_works, potential_energies)
-		data = data._replace(potential=potential, transfer_field=transfer_field, 
-							 net_field=net_field, energy_field=energy_field)
-
-		# generate new excitations and update data
-		energy_field = self.generate_excitations(data, I, excess_works, potential_energies)
-		data = data._replace(energy_field=energy_field)
+		data = data._replace(potential=potential, transfer_field=transfer_field, net_field=net_field)
 
 		return (data, accepted_positions, logdensities, works, 
 				total_works, energies, proposal_energies, sample_info)
 
 	def boundstate_gibbs_step(self, data, I, key):
+		I_particles = get_particles(I, data.bound_states, self.pad_value)
+		state = (I, I_particles)
+
 		pass
+
+		# reset fields appropriately
 
 	def generate_brownian_fields(self, key, steps=1):
 		"""Generates field values of Brownian fluctuations and the index of the starting set."""
@@ -217,15 +217,20 @@ class ParticleSystem:
 		mass, charge = self.M[i], self.Q[i]
 		molecule_mass = data.masses[data.bound_states[i]]
 
-		velocity_bound = compute_velocity_bound(i, position, data.interaction_field, data.brownian_field, 
-			data.external_field, data.energy_field, data.transfer_field, mass, charge, 
-			molecule_mass, self.gamma, self.time_unit)
+		velocity_bound = compute_particle_velocity_bound(i, position, data.interaction_field, 
+			data.brownian_field, data.external_field, data.energy_field, data.transfer_field, 
+			mass, charge, molecule_mass, self.gamma, self.time_unit)
 
 		return velocity_bound
 
+	def boundstate_pregibbs_update_data(self, data, state):
+		I, I_particles = state
+		pass
+		
+
 	def boundstate_gibbs_update_data(self, data, state, proposed_coms, proposed_orientations):
 		"""Multi-molecule data needed for a single bound state Gibbs update step."""
-		I = state
+		I, I_particles = state
 		coms = data.coms[data.bound_states]
 		proposed_coms = proposed_coms[data.bound_states]
 		proposed_orientations = proposed_orientations[data.bound_states]
@@ -233,10 +238,9 @@ class ParticleSystem:
 		R_moved = move(data.R, coms, proposed_coms)
 		R_proposed = rotate(R, proposed_coms, proposed_orientations)
 
-		I_particles = get_particles(I, data.bound_states, self.pad_value)
 		L_test, LQ_test = self.gibbs_update_data(data, I_particles)
 
-		return I_particles, R_moved, R_proposed, L_test, LQ_test
+		return R_moved, R_proposed, L_test, LQ_test
 
 	def determine_bound_states(self, data, I):
 		"""Determines all bounds states."""
@@ -267,7 +271,6 @@ class ParticleSystem:
 			data.transfer_field, I, positions, accepted_positions, self.M[I], self.gamma)
 		net_field = data.net_field.at[I_mask].set(end_field)
 		new_transfer_field = data.transfer_field.at[I_mask].set(0.0)
-		energy_field = data.energy_field.at[I_mask].set(0.0)
 
 		transfer_field = generate_full_transferred_field(
 			I, net_field, data.R, data.bound_states, data.masses, data.coms, data.MOIs, self.pad_value)
@@ -277,24 +280,26 @@ class ParticleSystem:
 		net_field = net_field.at[:, :].add(transfer_field)
 		transfer_field = transfer_field.at[:, :].add(new_transfer_field) 
 
-		return transfer_field, net_field, energy_field
+		return transfer_field, net_field
 
-	def generate_excitations(self, data, I, excess_works, potential_energies):
-		"""Generate new excitations, which are added to the energy field."""
+	def generate_excitations(self, data, excess_works, potential_energies):
+		"""
+		Generate new excitations, which are added to the energy field. 
+		Occurs at the end of a timestep, after all state updates.
+		"""
 		L = generate_unlabeled_lattice(data.R, self.n)
 		excitations_fn = jax.vmap(calculate_excitations, in_axes=(0, None, None, 0, None))
 
 		# generate excitations for *all* particles, consider changing to loop if vast majority don't excite
-		excitation_arrays, position_arrays = excitations_fn(I, data.R, L, excess_works, self.delta)
+		excitation_arrays, position_arrays = excitations_fn(self.I, data.R, L, excess_works, self.delta)
 
 		# filter for those that generate excitations (and are not padding)
 		excitation_arrays = excitation_arrays.at[:, :, :].multiply(
-			(I != self.pad_value) * excitation_mask(excess_works, potential_energies[I], self.epsilon))
+			excitation_mask(excess_works, potential_energies, self.epsilon))
 
 		# merge into an energy field
-		new_energy_field = merge_excitations(data.R, L, excitation_arrays, position_arrays)
-		new_energy_field = new_energy_field[data.R[:, 0], data.R[:, 1]]
-		energy_field = data.energy_field.at[:, :].add(new_energy_field)
+		energy_field = merge_excitations(data.R, L, excitation_arrays, position_arrays)
+		energy_field = energy_field[data.R[:, 0], data.R[:, 1]]
 
 		return energy_field
 
@@ -341,8 +346,7 @@ class ParticleSystem:
 			self, data, state, R_moved, R_proposed, proposed_coms, proposed_orientations, 
 			linear_velocity_bounds, angular_velocity_bounds):
 		### check proposed_coms shape, should be Ix2
-		I = state
-		I_particles = data.I_particles
+		I, I_particles = state
 		particle_mask = I_particles == self.pad_value
 		molecule_indices = bound_state_indices(I, data.bound_states, pad_value)
 		masses, coms, MOIs = data.masses[I], data.coms[I], data.MOIs[I]
@@ -375,12 +379,12 @@ class ParticleSystem:
 		B_paths = jnp.zeros(I.shape).at[molecule_indices].add(B_paths_by_particle)
 
 		# work, com + orientation only
-		work_fn = jax.vmap(calculate_boundstate_work, in_axes=(0, None, None, None, 0, 0, 0))
+		work_fn = jax.vmap(calculate_boundstate_work, in_axes=(0, None, None, None, None, 0, 0, 0))
 		works, total_forces, total_torques = work_fn(I, data.bound_states, data.net_field, data.R, 
-													 coms, proposed_coms, proposed_orientations)
+													 self.M, coms, proposed_coms, proposed_orientations)
 
 		logdensities = self.beta * (works - deltaEs - B_paths)
-		return logdensities, works, energies, proposal_energies, total_forces, total_torques 
+		return logdensities, works, energies, proposal_energies, total_forces, total_torques
 
 	def particle_proposal_sampler(self, data, state, key, range_, num_samples=1):
 		"""
@@ -453,13 +457,13 @@ class ParticleSystem:
 
 		return proposed_coms[proposed_idx], proposed_orientations[proposed_idx]
 
-### make sure work (excess work) / fields are being tracked / combined / reset correctly
 ### filter out small work?
 
 ### generate initial lattice L and any other needed data
+### generate excitation emissions after all state updates, phase 1 and 2
 
 ### need to cutoff velocity bound?
-### following that, cuttoff paths and consider vmap version
+### following that, cuttoff paths and consider vmap version of work functions, etc.
 
 ### use sparse arrays to speed up bound state discovery, among other things
 ### vmap over particles (all? independent/dense set?), finding each molecule, then merge
