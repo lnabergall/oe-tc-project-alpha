@@ -90,6 +90,7 @@ class ParticleSystem:
 
 	# sampling 
 	kappa: float							# scale factor used to pseudo-normalize densities
+	proposal_samples: int 					# number of samples to generate a valid proposal in samplers
 
 	### --- data fields with defaults ---
 
@@ -135,12 +136,12 @@ class ParticleSystem:
 		update_data_fn = jax.vmap(self.particle_update_data, in_axes=(None, (0, 0)))
 		velocity_bounds = update_data_fn(data, state)
 
-		# generate proposal
+		# generate proposals
 		key, *keys_proposal = jax.random.split(key, num=I.shape[0]+1)
 		proposal_generator_fn = jax.vmap(self.particle_proposal_generator, in_axes=(None, (0, 0), 0, 0))
 		proposed_positions = proposal_generator_fn(data, state, keys_proposal, velocity_bounds)
 
-		# logdensity
+		# logdensities
 		logdensity_fn = jax.vmap(self.particle_logdensity_function, in_axes=(None, (0, 0), 0, 0))
 		logdensities, works, total_works, energies, proposal_energies = logdensity_fn(
 			data, state, proposed_positions, velocity_bounds)
@@ -151,7 +152,7 @@ class ParticleSystem:
 		sample_fn = jax.vmap(sample, in_axes=(0, 0, 0, 0, None))
 		accepted_positions, sample_info = sample_fn(
 			keys_sample, logdensities, state[1], proposed_positions, self.kappa)
-		R = data.R.at[I_mask].set(accepted_positions)
+		R = place_2D(data.R, I_mask, accepted_positions)
 		data = data._replace(R=R)
 
 		# compute particle potential energies
@@ -159,23 +160,67 @@ class ParticleSystem:
 		potential_energies = potential_energy_all(data.R, self.Q, potential)
 
 		# get bound states and transfer excess work
-		L, LQ, bound_states, masses, coms, MOIs = self.determine_bound_states(data, I)
+		L, LQ, bound_states, masses, coms, MOIs, _, _ = self.determine_bound_states(data, I)
 		data = data._replace(L=L, LQ=LQ, bound_states=bound_states, masses=masses, coms=coms, MOIs=MOIs)
 		state_extra = (state[0], I_mask, state[1], accepted_positions)
 		transfer_field, net_field = self.generate_transfer_field(
 			data, state_extra, excess_works, potential_energies)
 		data = data._replace(potential=potential, transfer_field=transfer_field, net_field=net_field)
 
-		return (data, accepted_positions, logdensities, works, 
+		return (data, accepted_positions, logdensities, works, excess_works,
 				total_works, energies, proposal_energies, sample_info)
 
-	def boundstate_gibbs_step(self, data, I, key):
+	def boundstate_gibbs_step(self, data, I, key, excess_works):
 		I_particles = get_particles(I, data.bound_states, self.pad_value)
-		state = (I, I_particles)
+		particle_mask = I_particles != self.pad_value
+		state = (I, I_particles, particle_mask)
 
-		pass
+		(potential, interaction_field, L_test, LQ_test, linear_velocity_bounds, angular_velocity_bounds, 
+			all_prev_energy_factors, all_prev_factor_indices) = self.boundstate_pregibbs_update_data(data, state)
+		data = data._replace(potential=potential, interaction_field=interaction_field, 
+							 L_test=L_test, LQ_test=LQ_test)
 
-		# reset fields appropriately
+		# generate proposals
+		key, *keys_proposal = jax.random.split(key, num=I.shape[0]+1)
+		proposal_generator_fn = jax.vmap(self.boundstate_proposal_sampler, in_axes=(None, 0, 0, 0, 0, None))
+		proposed_coms, proposed_orientations = proposal_generator_fn(
+			data, I, keys_proposal, linear_velocity_bounds, angular_velocity_bounds, self.proposal_samples)
+
+		# particle positions of proposals
+		R_proposed = self.boundstate_gibbs_update_data(data, I, proposed_coms, proposed_orientations)
+
+		# logdensities
+		(logdensities, works, energies, proposal_energies, total_forces, 
+			total_torques) = self.bulk_boundstate_logdensity_function(
+			data, state, R_proposed, proposed_coms, proposed_orientations, excess_works)
+		excess_works = excess_works - works
+
+		# sample next positions
+		key, *keys_sample = jax.random.split(key, num=I.shape[0]+1)
+		sample_fn = jax.vmap(sample, in_axes=(0, 0, 0, 0, None))
+		accepted_coms, sample_info = sample_fn(
+			keys_sample, logdensities, data.coms, proposed_coms, self.kappa)
+		accepted_indicators = sample_info[1]
+		accepted_orientations = jnp.where(accepted_indicators, proposed_orientations, 0)
+		accept_mask = particle_mask * accepted_indicators[data.bound_states]
+		R = jnp.where(jnp.expand_dim(accept_mask, axis=-1), R_proposed, data.R)
+		data = data._replace(R=R)
+
+		# determine new bound states
+		prev_bound_states = data.bound_states
+		(L, LQ, bound_states, masses, coms, MOIs, all_energy_factors, 
+			all_factor_indices) = self.determine_bound_states(data, I_particles)
+		data = data._replace(L=L, LQ=LQ, bound_states=bound_states, masses=masses, coms=coms, MOIs=MOIs)
+
+		# transfer excess work
+		energy_field = add_boundstate_energy_transfers(
+			I, excess_works, total_forces, total_torques, coms, data.R, bound_states, 
+			prev_bound_states, data.energy_field, all_energy_factors, all_factor_indices, 
+			all_prev_energy_factors, all_prev_factor_indices, self.pad_value)
+		data = data._replace(energy_field=energy_field)
+
+		return (data, accepted_coms, accepted_orientations, logdensities, works, 
+				energies, proposal_energies, total_forces, total_torques, sample_info)
 
 	def generate_brownian_fields(self, key, steps=1):
 		"""Generates field values of Brownian fluctuations and the index of the starting set."""
@@ -224,31 +269,41 @@ class ParticleSystem:
 		return velocity_bound
 
 	def boundstate_pregibbs_update_data(self, data, state):
-		I, I_particles = state
-		pass
+		I, I_particles, _ = state
+
+		potential, interaction_field, L_test, LQ_test = self.gibbs_update_data(data, I_particles)
+
+		potential_energy_factors_fn = jax.vmap(
+			potential_energy_factors, in_axes=(0, 0, None, None, None, None, None, None))
+		all_energy_factors, all_factor_indices = potential_energy_factors_fn(
+			data.R, self.Q, data.L, data.LQ, self.rho, self.point_func, self.factor_limit, self.pad_value)
 		
+		linear_velocity_bounds, angular_velocity_bounds = compute_boundstate_velocity_bounds(
+			I, data.R, data.bound_states, data.interaction_field, data.net_field, 
+			data.masses, data.coms, self.M, self.Q, self.gamma, self.time_unit)
+
+		return (potential, interaction_field, L_test, LQ_test, linear_velocity_bounds, 
+				angular_velocity_bounds, all_energy_factors, all_factor_indices)
 
 	def boundstate_gibbs_update_data(self, data, state, proposed_coms, proposed_orientations):
 		"""Multi-molecule data needed for a single bound state Gibbs update step."""
-		I, I_particles = state
+		I = state
 		coms = data.coms[data.bound_states]
 		proposed_coms = proposed_coms[data.bound_states]
 		proposed_orientations = proposed_orientations[data.bound_states]
 
 		R_moved = move(data.R, coms, proposed_coms)
-		R_proposed = rotate(R, proposed_coms, proposed_orientations)
+		R_proposed = rotate(R_moved, proposed_coms, proposed_orientations)
 
-		L_test, LQ_test = self.gibbs_update_data(data, I_particles)
-
-		return R_moved, R_proposed, L_test, LQ_test
+		return R_proposed
 
 	def determine_bound_states(self, data, I):
-		"""Determines all bounds states."""
+		"""Determines all bound states."""
 		R = data.R
 		potential_energy_factors_fn = jax.vmap(
 			potential_energy_factors, in_axes=(0, 0, None, None, None, None, None, None))
 		bonds_fn = jax.vmap(compute_bonds, in_axes=(0, 0, 0, None, None))
-		L = add_to_lattice(self.L_test, I, R, self.pad_value)
+		L = add_to_lattice(data.L_test, I, R, self.pad_value)
 		LQ = generate_property_lattice(L, self.Q, self.pad_value)
 
 		all_energy_factors, all_factor_indices = potential_energy_factors_fn(
@@ -260,21 +315,22 @@ class ParticleSystem:
 		coms, masses = centers_of_mass(R, self.M, bound_states, self.n)
 		MOIs = moments_of_inertia(R, self.M, coms, bound_states, self.n)
 
-		return L, LQ, bound_states, masses, coms, MOIs
+		return L, LQ, bound_states, masses, coms, MOIs, all_energy_factors, all_factor_indices
 
 	def generate_transfer_field(self, data, state, excess_works, potential_energies):
 		"""Generate new transfer forces, which are added to the transfer field."""
 		I, I_mask, positions, accepted_positions = state
+		I_mask_expand = jnp.broadcast_to(jnp.expand_dim(I_mask, axis=-1), I_mask.shape + (2,))
 
 		end_field_fn = jax.vmap(calculate_end_field, in_axes=(None, None, None, None, None, 0, 0, 0, None))
 		end_field = end_field_fn(data.brownian_field, data.external_field, data.energy_field, 
 			data.transfer_field, I, positions, accepted_positions, self.M[I], self.gamma)
-		net_field = data.net_field.at[I_mask].set(end_field)
-		new_transfer_field = data.transfer_field.at[I_mask].set(0.0)
+		net_field = jnp.where(I_mask_expand, end_field, data.net_field)
+		new_transfer_field = jnp.where(I_mask_expand, 0.0, data.transfer_field)
 
 		transfer_field = generate_full_transferred_field(
 			I, net_field, data.R, data.bound_states, data.masses, data.coms, data.MOIs, self.pad_value)
-		net_field = net_field.at[I_mask].set(0.0)
+		net_field = jnp.where(I_mask_expand, 0.0, net_field)
 		transfer_field = transfer_field.at[:, :].multiply(
 			transfer_mask(excess_works, potential_energies, self.epsilon))
 		net_field = net_field.at[:, :].add(transfer_field)
@@ -342,13 +398,10 @@ class ParticleSystem:
 		# return both, for excess work and work applied even if proposal rejected
 		return logdensity, work, total_work, energy, proposal_energy
 
-	def bulk_boundstate_logdensity_function(
-			self, data, state, R_moved, R_proposed, proposed_coms, proposed_orientations, 
-			linear_velocity_bounds, angular_velocity_bounds):
-		### check proposed_coms shape, should be Ix2
-		I, I_particles = state
-		particle_mask = I_particles == self.pad_value
-		molecule_indices = bound_state_indices(I, data.bound_states, pad_value)
+	def bulk_boundstate_logdensity_function(self, data, state, R_proposed, proposed_coms, 
+											proposed_orientations, work_budgets):
+		I, _, particle_mask = state
+		molecule_indices = bound_state_indices(I, data.bound_states, 2*self.k)
 		masses, coms, MOIs = data.masses[I], data.coms[I], data.MOIs[I]
 
 		# compute molecule path, first translation then add rotation at the end
@@ -367,7 +420,7 @@ class ParticleSystem:
 		energies = potential_energy_func(data.R, self.Q)
 		proposal_energies = potential_energy_func(R_proposed, self.Q)
 		deltaEs_by_particle = particle_mask * (proposal_energies - energies) 	# mask probably not needed
-		deltaEs = jnp.zeros(I.shape).at[molecule_indices].add(deltaEs_by_particle)
+		deltaEs = jnp.zeros(I.shape).at[molecule_indices].add(deltaEs_by_particle, mode="drop")
 
 		# energy barrier, all particle paths
 		energy_barrier_fn = jax.vmap(energy_barrier, in_axes=(0, None, 0, 0, None))
@@ -376,12 +429,13 @@ class ParticleSystem:
 			particle_paths_nofilter, potential_energy_func, 
 			max_boundary_energies, self.Q, self.energy_lower_bound)
 		B_paths_by_particle = B_paths_by_particle.at[:].multiply(particle_mask)
-		B_paths = jnp.zeros(I.shape).at[molecule_indices].add(B_paths_by_particle)
+		B_paths = jnp.zeros(I.shape).at[molecule_indices].add(B_paths_by_particle, mode="drop")
 
 		# work, com + orientation only
 		work_fn = jax.vmap(calculate_boundstate_work, in_axes=(0, None, None, None, None, 0, 0, 0))
 		works, total_forces, total_torques = work_fn(I, data.bound_states, data.net_field, data.R, 
 													 self.M, coms, proposed_coms, proposed_orientations)
+		works = jnp.max(jnp.stack((works, work_budgets), axis=-1), axis=-1)
 
 		logdensities = self.beta * (works - deltaEs - B_paths)
 		return logdensities, works, energies, proposal_energies, total_forces, total_torques

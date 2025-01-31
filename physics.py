@@ -188,18 +188,6 @@ def potential_energy_factors(r, q, L, LQ, rho, point_func, factor_limit, pad_val
 	return energy_factors, indices
 
 
-def potential_energy_factors_bulk(j, prev_bound_states, curr_bound_states, 
-								  all_energy_factors, all_factor_indices, pad_value=-1):
-	"""Assumes prev_bound_states is a refinement of curr_bound_states."""
-	k = curr_bound_states.shape[0]
-	new_particles_mask = jnp.logical_xor(curr_bound_states == j, prev_bound_states == j)
-	filtered_energies = jnp.where(new_particles_mask, all_energy_factors, 0)
-	filtered_indices = jnp.where(new_particles_mask, all_factor_indices, pad_value)
-	energy_factors = jnp.zeros(k)
-	energy_factors = energy_factors.at[filtered_indices].add(filtered_energies)
-	return energy_factors
-
-
 def bonded(U, max_energy):
 	return U <= max_energy
 
@@ -287,6 +275,13 @@ def get_particles(I, bound_states, pad_value):
 
 	I_particles = jnp.fromfunction(collection_fn, bound_states.shape, dtype=int)
 	return I_particles
+
+
+def get_boundstates(bound_states, pad_value):
+	I = jnp.arange(bound_states.shape[0])
+	max_state = jnp.max(bound_states)
+	I = I.at[max_state+1:].set(pad_value)
+	return I
 
 
 def bound_state_indices(I, bound_states, pad_value):
@@ -508,26 +503,25 @@ def compute_particle_velocity_bound(i, r, interaction_field, brownian_field, ext
 	return distance
 
 
-def compute_linear_velocity_bound(I, R, bound_states, interaction_field, net_field, 
-								  energy_field, masses, M, Q, gamma, time_unit):
+def compute_boundstate_velocity_bounds(I, R, bound_states, interaction_field, 
+									   net_field, masses, coms, M, Q, gamma, time_unit):
 	masses_by_particle = masses[bound_states]
+	coms_by_particle = coms[bound_states]
 	interact_velocities_by_particle = Q * interaction_field[R] / (gamma * masses_by_particle)
-	energy_velocities_by_particle = jnp.sqrt(2 * energy_field / M)
 	other_velocities_by_particle = M * net_field / (gamma * masses_by_particle)
+	net_velocities = interact_velocities_by_particle + other_velocities_by_particle
+	net_angular_velocities = calculate_torque(R, coms_by_particle, net_velocities)
 
-	def sum_velocity(i):
+	def sum_velocities(i):
 		particle_mask = bound_states == i 
-		net_velocities = (interact_velocities_by_particle + energy_velocities_by_particle 
-						  + other_velocities_by_particle)
-		return jnp.sum(particle_mask * net_velocities, axis=0)
+		velocity = jnp.sum(particle_mask * net_velocities, axis=0)
+		angular_velocity = jnp.sum(particle_mask * net_angular_velocities, axis=0)
+		return velocity, angular_velocity
 
-	velocities = jax.vmap(sum_velocity)(I)
+	velocities, angular_velocities = jax.vmap(sum_velocities)(I)
 	distances = jnp.linalg.vector_norm(velocities, axis=-1) * time_unit
-	return distances
-
-
-def compute_angular_velocity_bound():
-	pass
+	angular_distances = jnp.linalg.vector_norm(angular_velocities, axis=-1) * time_unit
+	return distances, angular_distances
 
 
 def energy_barrier(path, potential_energy_func, max_boundary_energy, coupling_constant, lower_bound):
@@ -665,6 +659,11 @@ def calculate_end_field(brownian_field, external_field, energy_field,
 def calculate_torque(r, r_axis, f_vector):
 	position_vec = r - r_axis
 	return jnp.cross(position_vec, f_vector)
+
+
+def torque_force(torque, r, r_axis):
+ 	position_vec = r - r_axis
+	return cross_1D(torque, position_vec) / jnp.linalg.vector_norm(position_vec) ** 2
 
 
 def cross_1D(y_1D, x_2D):
@@ -818,3 +817,79 @@ def calculate_excitation_work(i, r_start, r_end, energy_field):
 	excitation_work = jnp.max(jnp.array(jnp.dot(excitation, update_vec), energy))
 	total_excitation_work = jnp.linalg.vector_norm(excitation)
 	return excitation_work, total_excitation_work
+
+
+def add_boundstate_energy_transfers(I, excess_works, total_forces, total_torques, coms, R, 
+									curr_bound_states, prev_bound_states, energy_field, 
+									curr_energy_factors, curr_factor_indices, prev_energy_factors, 
+									prev_factor_indices, pad_value):
+	"""
+	Assumes prev_bound_states is a refinement of curr_bound_states. 
+	Also, as sets, i is a subset of j.
+
+	I
+		Array of bound state indices specifying a subset of the bound states. 
+		1D, l, pad_value-padded.
+	excess_work
+		Array of excess work values. 1D, l, 0-padded.
+	energy_vectors
+		Array of vectors giving the direction of energy transfer. 2D, lx2, 0-padded.
+	curr_bound_states
+		Array giving the bound state index for each particle. 1D, k.
+	prev_bound_states
+		Array giving the previous bound state index for each particle. 1D, k.
+	energy_field
+		Array of energy field values. 2D, kx2. 
+	curr_energy_factors
+		Array of energy factors for each particle. 2D, kxd, pad_value-padded. 
+	curr_factor_indices
+		Array containing indices of the particles generating each of the energy factors
+		in curr_energy_factors. 2D, kxd, pad_value-padded. 
+	prev_energy_factors
+		Array of previous energy factors for each particle. 2D, kxd, pad_value-padded. 
+	prev_factor_indices
+		Array containing indices of the particles generating each of the energy factors
+		in prev_energy_factors. 2D, kxd, pad_value-padded. 
+	pad_value
+		Scalar.
+	"""
+	def aggregate_factors(i_prev, w, f, tau, com):
+		old_particles_mask = prev_bound_states == i_prev
+		not_padding = i_prev != pad_value
+
+		# current factors
+		curr_filtered_energies = jnp.where(old_particles_mask, curr_energy_factors, 0.0)
+		curr_filtered_indices = jnp.where(old_particles_mask, curr_factor_indices, 2*k)
+		curr_filtered_energies = jnp.where(not_padding, curr_filtered_energies, 0.0)
+
+		# previous factors
+		prev_filtered_energies = jnp.where(old_particles_mask, prev_energy_factors, 0.0)
+		prev_filtered_indices = jnp.where(old_particles_mask, prev_factor_indices, 2*k)
+		prev_filtered_energies = jnp.where(not_padding, prev_filtered_energies, 0.0)
+
+		normalizer = jnp.sum(prev_filtered_energies) - jnp.sum(curr_filtered_energies)
+		normalizer = jnp.where(not_padding, normalizer, 1.0)
+
+		curr_weighted_factors = (curr_filtered_energies * w) / normalizer
+		prev_weighted_factors = (prev_filtered_energies * w) / normalizer
+
+		# construct and scatter unit energy vectors
+		f_taus = jax.vmap(torque_force, in_axes=(None, 0, None))(tau, R, com)
+		unit_energy_vectors = normalize(f + f_taus)
+		curr_vectors = unit_energy_vectors[curr_filtered_indices]
+		prev_vectors = unit_energy_vectors[prev_filtered_indices]
+
+		curr_weighted_vectors = jnp.expand_dims(curr_weighted_factors, axis=-1) * curr_vectors
+		prev_weighted_vectors = jnp.expand_dims(prev_weighted_factors, axis=-1) * prev_vectors
+
+		energy_field = energy_field.at[filtered_indices].add(prev_weighted_vectors, mode="drop")
+		energy_field = energy_field.at[filtered_indices].subtract(curr_weighted_vectors, mode="drop")
+		return energy_field
+
+	energy_field = jax.vmap(aggregate_factors, out_axes=None)(
+		I, excess_works, total_forces, total_torques, coms)
+	return energy_field
+
+	### consider later getting more creative, something like a 1D array I1 of indices 
+	### ordered by boundstate and then a second array I2 to hold the boundary indices  
+	### used to select the indices from I1 by boundstate

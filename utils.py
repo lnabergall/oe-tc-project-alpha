@@ -2,6 +2,12 @@ import jax
 import jax.numpy as jnp
 
 
+def place_2D(R, M, P):
+	"""Assign values from P into R at the row indices indicated by the 1D mask M."""
+	M = jnp.broadcast_to(jnp.expand_dims(M, -1), M.shape + (2,))
+	return jnp.place(R, M, P, inplace=False)
+
+
 def ith_nonzero_index(A, i):
 	"""Gets the index of the ith nonzero element of a 1D boolean array 'A'."""
 	cumsums = jnp.cumsum(A)
@@ -15,7 +21,7 @@ def unravel_2Dindex(i, dim2):
 
 def remove_rows_jit(A, I, pad_value=-1)
 	k = A.shape[0]
-	I = jnp.where(I == pad_value, k+1, I)
+	I = jnp.where(I == pad_value, 2*k, I)
 	keep_mask = jnp.ones((k,), dtype=bool)
 	keep_mask = keep_mask.at[I].set(False, mode="drop")
 	keep_indices = jnp.where(keep_mask, size=k, fill_value=k+1)
