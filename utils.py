@@ -2,6 +2,14 @@ import jax
 import jax.numpy as jnp
 
 
+def ceil_div(n, d):
+	return -(n // -d)
+
+
+def replace(A, val1, val2):
+	return jnp.where(A == val1, val2, A)
+
+
 def place_2D(R, M, P):
 	"""Assign values from P into R at the row indices indicated by the 1D mask M."""
 	M = jnp.broadcast_to(jnp.expand_dims(M, -1), M.shape + (2,))
@@ -11,7 +19,7 @@ def place_2D(R, M, P):
 def ith_nonzero_index(A, i):
 	"""Gets the index of the ith nonzero element of a 1D boolean array 'A'."""
 	cumsums = jnp.cumsum(A)
-	return jnp.searchsorted(cumsums, i + 1, side='left')
+	return jnp.searchsorted(cumsums, i + 1, side='left')	# change method
 
 
 def unravel_2Dindex(i, dim2):
@@ -19,7 +27,7 @@ def unravel_2Dindex(i, dim2):
 	return jnp.array((i // dim2, i % dim2))
 
 
-def remove_rows_jit(A, I, pad_value=-1)
+def remove_rows_jit(A, I, pad_value=-1):
 	k = A.shape[0]
 	I = jnp.where(I == pad_value, 2*k, I)
 	keep_mask = jnp.ones((k,), dtype=bool)
@@ -27,6 +35,43 @@ def remove_rows_jit(A, I, pad_value=-1)
 	keep_indices = jnp.where(keep_mask, size=k, fill_value=k+1)
 	A_minus = A.at[keep_indices].get(mode="fill", fill_value=pad_value)
 	return A_minus
+
+
+def expand_partition(P, part_size, pad_value):
+	"""Convert a 1D coloring into a 2D partition."""
+	k = P.shape[0]
+
+	order = jnp.argsort(P, stable=True)
+	P_sorted = P[order]
+
+	part_positions = jnp.arange(k) - jnp.searchsorted(P_sorted, P_sorted)
+
+	partition = jnp.full((k, part_size), pad_value)
+	partition = partition.at[P_sorted, part_positions].set(order)
+	return partition
+
+
+def rearrange_padding(A, pad_value):
+	"""
+	Given a 2D pad_value-padded array A, rearranges each row to put all padding
+	after all other elements while preserving the order of those elements.
+	"""
+	d = A.shape[1]
+
+	def rearrange_row(x):
+		indices = jnp.arange(d)
+		valid_key = x == pad_value
+		compound_key = (valid_key * d) + indices
+		order = jnp.argsort(compound_key)
+		return x[order]
+
+	return jax.vmap(rearrange_row)(A)
+
+
+def compute_group_sums(A, B, num_groups):
+	"""Sums the values of A for each unique value in B and returns the sums indexed by B."""
+	group_sums = jax.ops.segment_sum(A, B, num_groups)
+	return group_sums[B]
 
 
 def normalize(A):
@@ -51,11 +96,11 @@ def bfs(edges, i, pad_value):
 	pad_value
 		Scalar used as a padding used to indicate elements of edges that should be treated as null.
 	"""
-	num_vertices = row_indices.shape[0]
+	k = row_indices.shape[0]
 
-	visited = jnp.zeros(num_vertices, dtype=bool)
+	visited = jnp.zeros(k, dtype=bool)
 	visited = visited.at[i].set(True)
-	queue = jnp.full((num_vertices,), pad_value, dtype=int)
+	queue = jnp.full((k,), pad_value, dtype=int)
 	queue = queue.at[0].set(i)
 	head, tail = 0, 1
 
@@ -83,3 +128,30 @@ def bfs(edges, i, pad_value):
 
 	visited, queue, head, tail = jax.lax.while_loop(cond_fn, body_fn, (visited, queue, head, tail))
 	return visited
+
+
+def smallest_missing(x, max_int, pad_value):
+	mask = jnp.zeros(max_int, dtype=bool)
+	mask = mask.at[x].set(True)
+	missing = jnp.nonzero(~mask, size=1, fill_value=pad_value)[0]
+	return jax.lax.cond(missing == pad_value, lambda: max_int + 1, lambda: missing)
+
+
+def greedy_graph_coloring(edges, pad_value):
+	k = edges.shape[0]
+	colors = jnp.full(k, pad_value)
+	max_color = 1
+
+	def color_vertex(i, state):
+		max_color, colors = state
+		neighbors = edges[i]
+		valid = (neighbors != pad_value) & (neighbors < i)
+		safe_nbrs = jnp.where(valid, nbrs, 2*k)
+		nbr_colors = colors.at[safe_nbrs].get(mode="fill", fill_value=2*k)
+		choice = smallest_missing(nbr_colors, max_color, pad_value)
+		max_color = jnp.max(jnp.array((color, max_color)))
+		colors = colors.at[i].set(choice)
+		return colors
+
+	colors = jax.lax.fori_loop(0, n, color_vertex, (max_color, colors))
+	return colors

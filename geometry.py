@@ -3,6 +3,8 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
+from utils import *
+
 
 @partial(jax.jit, static_argnums=[1])
 def periodic_norm(x_diff, n):
@@ -85,16 +87,17 @@ def lattice_positions(n):
 def square_indices(r, delta, n):
 	x, y = r
 	diameter = 2 * delta
-	row_indices = (y + jnp.arange(-delta, delta + 1)) % n
+	row_indices = (y + jnp.arange(diameter + 1) - delta) % n
 	col_start = jnp.clip(x - delta, 0, n - diameter)
-	col_indices = jnp.arange(col_start, col_start + diameter)
+	col_indices = jnp.arange(diameter) + col_start
 	return row_indices, col_indices
 
 
 def centered_square(L, r, delta):
 	"""
 	Generate the subset of the lattice 'L' consisting of a square of radius 'delta' centered at 'r',
-	along with the positions in that subset.  
+	along with the positions in that subset. Adjusts for periodicity in the x-dimension and 
+	boundary limits in the y-dimension.
 	"""
 	n = L.shape[0]
 	x_indices, y_indices = square_indices(r, delta, n)
@@ -103,7 +106,29 @@ def centered_square(L, r, delta):
 	return square, positions
 
 
-@partial(jax.jit, static_argnums=[3])
+def square_indices_nowrap(r, delta, n):
+	x, y = r
+	diameter = 2 * delta
+	col_start = jnp.clip(x - delta, 0)
+	col_indices = jnp.arange(diameter) + col_start
+	row_start = jnp.clip(y - delta, 0)
+	row_indices = jnp.arange(diameter) + row_start
+	return row_indices, col_indices
+
+
+def centered_square_nowrap(L, r, delta):
+	"""
+	Generate the subset of the lattice 'L' consisting of a square of radius 'delta' centered at 'r',
+	along with the positions in that subset.  
+	"""
+	n = L.shape[0]
+	x_indices, y_indices = square_indices_nowrap(r, delta, n)
+	square = L[x_indices[:, None], y_indices[None, :]]
+	positions = jnp.stack(jnp.meshgrid(x_indices, y_indices, indexing="ij"), axis=-1)
+	return square, positions
+
+
+@partial(jax.jit, static_argnums=[1, 2, 3])
 def generate_lattice(R, n, pad_value, sites=2):
 	"""
 	Generate the occupation lattice corresponding to R. The lattice is nxnxsites, 
@@ -137,34 +162,16 @@ def add_to_lattice(L, I, R, pad_value):
 	Add particles in I to lattice L. Assumes 2-particle co-location limit is obeyed
 	and no particles in I are co-located.
 	"""
-	def add(L, i):
-		x, y = R[i]
-		idx = jnp.argmax(L[x, y] == pad_value)
-		L = L.at[x, y, idx].set(i)
-		return L
-
-	def update_fn(L, i):
-		padding_fn = lambda L, _: L
-		return jax.lax.cond(i == pad_value, padding_fn, add, L, i)
-
-	L = jax.vmap(update_fn, in_axes=(None, 0), out_axes=None)(L, I)
-	return L
+	n = L.shape[0]
+	R_I = R[I]
+	empty_sites = jnp.argmin(L[R_I[:, 0], R_I[:, 1]], axis=-1).at[I == pad_value].set(2*n)
+	return L.at[R_I[:, 0], R_I[:, 1], empty_sites].set(I, mode="drop")
 
 
 def remove_from_lattice(L, I, R, pad_value):
 	"""Remove particles in I from lattice L. Assumes that R matches L."""
-	def remove(L, i):
-		x, y = R[i]
-		idx = jnp.argmax(L[x, y] == i)
-		L = L.at[x, y, idx].set(pad_value)
-		return L
-
-	def update_fn(L, i):
-		padding_fn = lambda L, _: L
-		return jax.lax.cond(i == pad_value, padding_fn, remove, L, i)
-
-	L = jax.vmap(update_fn, in_axes=(None, 0), out_axes=None)(L, I)
-	return L
+	removal_mask = jnp.isin(L, I.at[I == pad_value].set(pad_value - 1))
+	return L.at[removal_mask].set(pad_value)
 
 
 def unlabel_lattice(L, pad_value):
@@ -184,3 +191,101 @@ def generate_unlabeled_lattice(R, n):
 def generate_property_lattice(L, C, pad_value):
 	"""Gather property values from a 1D Array C using indices in an Array L while ignoring padding."""
 	return jnp.where(L != pad_value, C[L], pad_value)
+
+
+def independent_partition(R, L, part_size, min_sep, pad_value):
+	"""
+	Partitions L into square cells of diameter min_sep 
+	and assigns each site in a cell to a different independent set. 
+	min_sep must be even. 
+
+	R
+		Array of particle positions. 2D, kx2. Not used currently.
+	L 
+		Labeled occupation array. 3D, nxnx2.
+	part_size
+		Scalar. Not used currently.
+	min_sep
+		Scalar, minimum separation required between particles in an independent set. Must be even.
+	pad_value
+		Scalar.
+	"""
+	k, n = R.shape[0], L.shape[0]
+	sep_radius = min_sep // 2
+	cell_dim = ceil_div(n, min_sep)
+	center_indices = jnp.arange(cell_dim ** 2)
+	
+	def scan_cell(i):
+		# get cell center
+		i, j = i // cell_dim, i % cell_dim
+		i = (i * min_sep) + sep_radius
+		j = (j * min_sep) + sep_radius
+		r = jnp.array((i, j))
+
+		# get cell
+		cell, cell_positions = centered_square_nowrap(L, r, sep_radius)
+		cell = jnp.where(cell_positions >= n, pad_value, cell)
+
+		# partition cell
+		return cell.ravel()
+
+	P = jax.vmap(scan_cell)(center_indices)
+	P = rearrange_padding(P, pad_value)[:, :part_size]
+
+	return P
+
+
+def independent_group_partition(I, groups, R, L, part_size, min_sep, max_nbhrs, pad_value):
+	k, n = R.shape[0], L.shape[0]
+	sep_radius = min_sep // 2
+
+	L_alt = jnp.where(L == pad_value, 2*k, L)
+	L_groups = groups.at[L_alt].get(mode="fill", fill_value=pad_value)
+
+	cell_dim = ceil_div(n, min_sep)
+	center_indices = lattice_positions(cell_dim)
+	
+	def scan_cell(r):
+		# get cell center
+		r = (r * min_sep) + sep_radius
+
+		# get cell
+		cell, cell_positions = centered_square_nowrap(L_groups, r, sep_radius)
+		cell = jnp.where(cell_positions >= n, pad_value, cell)
+
+		# collect groups in the cell
+		cell_groups = jnp.unique(cell, size=min_sep**2, fill_value=pad_value)
+
+		return cell_groups
+
+	groups_by_cell = jax.vmap(jax.vmap(scan_cell, in_axes=0), in_axes=1)(center_indices)
+
+	shifts = jnp.array([[0, 1], [1, 0], [1, 1], [1, -1]])
+	shifts = jnp.concatenate((jnp.array([0, 0]), shifts, -shifts))
+
+	def find_group(i):
+		# cells containing group i
+		cells = jnp.any(groups_by_cell == i, axis=-1)
+		cell_indices = jnp.where(cells, center_indices, -2)
+		cell_indices = jnp.reshape(cell_indices, (cell_dim**2, 2))
+
+		# cells containing group i or adjacent to such a group
+		with_neighbors = cell_indices[:, None, :] + shifts[None, :, :]
+		with_neighbors = jnp.reshape(with_neighbors, (9 * cell_indices.shape[0], 2))
+		with_neighbors = jnp.where(with_neighbors < 0, pad_value, with_neighbors)
+		with_neighbors = jnp.unique(with_neighbors, axis=0, 
+									size=cell_indices.shape[0], fill_value=2*k)
+
+		# get all groups in these cells
+		adjacent_groups = groups_by_cell.at[
+			with_neighbors[:, 0], with_neighbors[:, 1]].get(mode="fill", fill_value=pad_value)
+		adjacent_groups = jnp.unique(adjacent_groups, size=max_nbhrs, fill_value=pad_value)
+
+		return adjacent_groups
+
+	group_graph = jax.vmap(find_group)(I)
+
+	partition = greedy_graph_coloring(group_graph, pad_value)
+	partition = expand_partition(partition, part_size, pad_value)
+
+	return partition
