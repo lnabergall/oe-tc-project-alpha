@@ -67,7 +67,7 @@ def uniform_orientation_proposal_generator(key, angular_range, num_samples):
 @partial(jax.jit, static_argnums=[3, 5])
 def uniform_proposal_generator(key, position, range_, num_samples, angular_range=None, 
 							   bound_state=False):
-	position_proposal = uniform_position_proposal_generator(key, position, range_, num_samples)
+	proposed_position = uniform_position_proposal_generator(key, position, range_, num_samples)
 	if bound_state:
 		proposed_orientation = uniform_orientation_proposal_generator(key, angular_range, num_samples)
 		return proposed_position, proposed_orientation

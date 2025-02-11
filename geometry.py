@@ -17,14 +17,14 @@ def lattice_distance(r, s, n):
 	diff = jnp.abs(r - s)
 	y_norm = diff[1]
 	x_diff = diff[0]
-	x_norm = periodic_norm(x_diff)
+	x_norm = periodic_norm(x_diff, n)
 	norm = x_norm + y_norm
 	return norm
 
 
 lattice_distances = jax.vmap(lattice_distance, (0, 0, None))
 lattice_distances_1D = jax.vmap(lattice_distance, (None, 0, None))
-lattice_distances_2D = jax.vmap(lattice_distances_1D, (None, 1, None))
+lattice_distances_2D = jax.vmap(lattice_distances_1D, (None, 0, None))
 
 
 def using_periodicity(x_diff, n):
@@ -86,9 +86,9 @@ def lattice_positions(n):
 
 def square_indices(r, delta, n):
 	x, y = r
-	diameter = 2 * delta
-	row_indices = (y + jnp.arange(diameter + 1) - delta) % n
-	col_start = jnp.clip(x - delta, 0, n - diameter)
+	diameter = (2 * delta) + 1
+	row_indices = (x + jnp.arange(diameter) - delta) % n
+	col_start = jnp.clip(y - delta, 0, n - diameter)
 	col_indices = jnp.arange(diameter) + col_start
 	return row_indices, col_indices
 
@@ -164,14 +164,15 @@ def add_to_lattice(L, I, R, pad_value):
 	"""
 	n = L.shape[0]
 	R_I = R[I]
-	empty_sites = jnp.argmin(L[R_I[:, 0], R_I[:, 1]], axis=-1).at[I == pad_value].set(2*n)
+	empty_sites = jnp.argmin(L[R_I[:, 0], R_I[:, 1]], axis=-1)
+	empty_sites = jnp.where(I == pad_value, 2*n, empty_sites)
 	return L.at[R_I[:, 0], R_I[:, 1], empty_sites].set(I, mode="drop")
 
 
 def remove_from_lattice(L, I, R, pad_value):
 	"""Remove particles in I from lattice L. Assumes that R matches L."""
-	removal_mask = jnp.isin(L, I.at[I == pad_value].set(pad_value - 1))
-	return L.at[removal_mask].set(pad_value)
+	removal_mask = jnp.isin(L, jnp.where(I == pad_value, pad_value - 1, I))
+	return jnp.where(removal_mask, pad_value, L)
 
 
 def unlabel_lattice(L, pad_value):
@@ -261,12 +262,12 @@ def independent_group_partition(I, groups, R, L, part_size, min_sep, max_nbhrs, 
 	groups_by_cell = jax.vmap(jax.vmap(scan_cell, in_axes=0), in_axes=1)(center_indices)
 
 	shifts = jnp.array([[0, 1], [1, 0], [1, 1], [1, -1]])
-	shifts = jnp.concatenate((jnp.array([0, 0]), shifts, -shifts))
+	shifts = jnp.concatenate((jnp.zeros((1, 2), dtype=int), shifts, -shifts))
 
 	def find_group(i):
 		# cells containing group i
 		cells = jnp.any(groups_by_cell == i, axis=-1)
-		cell_indices = jnp.where(cells, center_indices, -2)
+		cell_indices = jnp.where(jnp.expand_dims(cells, axis=-1), center_indices, -2)
 		cell_indices = jnp.reshape(cell_indices, (cell_dim**2, 2))
 
 		# cells containing group i or adjacent to such a group

@@ -6,6 +6,16 @@ def ceil_div(n, d):
 	return -(n // -d)
 
 
+def zero_prefix(A, index):
+	mask = jnp.arange(A.shape[0]) >= index
+	return A * mask
+
+
+def fill_suffix(A, index, val):
+	mask = jnp.arange(A.shape[0]) >= index
+	return jnp.where(mask, val, A)
+
+
 def replace(A, val1, val2):
 	return jnp.where(A == val1, val2, A)
 
@@ -96,7 +106,7 @@ def bfs(edges, i, pad_value):
 	pad_value
 		Scalar used as a padding used to indicate elements of edges that should be treated as null.
 	"""
-	k = row_indices.shape[0]
+	k = edges.shape[0]
 
 	visited = jnp.zeros(k, dtype=bool)
 	visited = visited.at[i].set(True)
@@ -130,28 +140,25 @@ def bfs(edges, i, pad_value):
 	return visited
 
 
-def smallest_missing(x, max_int, pad_value):
-	mask = jnp.zeros(max_int, dtype=bool)
-	mask = mask.at[x].set(True)
-	missing = jnp.nonzero(~mask, size=1, fill_value=pad_value)[0]
-	return jax.lax.cond(missing == pad_value, lambda: max_int + 1, lambda: missing)
+def smallest_missing(x, num_colors, pad_value):
+	# assumes there is always an unused color
+	mask = jnp.zeros(num_colors, dtype=bool)
+	mask = mask.at[x].set(True, mode="drop")
+	return jnp.argmin(mask)
 
 
 def greedy_graph_coloring(edges, pad_value):
 	k = edges.shape[0]
 	colors = jnp.full(k, pad_value)
-	max_color = 1
 
-	def color_vertex(i, state):
-		max_color, colors = state
+	def color_vertex(i, colors):
 		neighbors = edges[i]
 		valid = (neighbors != pad_value) & (neighbors < i)
-		safe_nbrs = jnp.where(valid, nbrs, 2*k)
+		safe_nbrs = jnp.where(valid, neighbors, 2*k)
 		nbr_colors = colors.at[safe_nbrs].get(mode="fill", fill_value=2*k)
-		choice = smallest_missing(nbr_colors, max_color, pad_value)
-		max_color = jnp.max(jnp.array((color, max_color)))
+		choice = smallest_missing(nbr_colors, k, pad_value)
 		colors = colors.at[i].set(choice)
 		return colors
 
-	colors = jax.lax.fori_loop(0, n, color_vertex, (max_color, colors))
+	colors = jax.lax.fori_loop(0, k, color_vertex, colors)
 	return colors

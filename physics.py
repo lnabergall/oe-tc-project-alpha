@@ -58,7 +58,7 @@ def potential_energy_all(R, Q, V):
 	return U
 
 
-def test_potential_factors(r, L, LQ, rho, point_func):
+def test_potential_factors(r, L, LQ, rho, point_func, pad_value):
 	"""
 	Computes the individual contribution to the potential at 'r' produced by each particle. 
 	Returns a square lattice of source potential values around 'r' of radius 'rho'.
@@ -80,7 +80,8 @@ def test_potential_factors(r, L, LQ, rho, point_func):
 	Lr_square, Lr_square_positions = centered_square(L, r, rho)
 	Qr_square, _ = centered_square(LQ, r, rho)
 	distances = lattice_distances_2D(r, Lr_square_positions, n)
-	V_expanded = Qr_square * point_func(distances)
+	V_expanded = Qr_square * jnp.expand_dims(point_func(distances), -1)
+	V_expanded = jnp.where(Lr_square == pad_value, 0.0, V_expanded)
 	return V_expanded, Lr_square
 
 
@@ -113,11 +114,12 @@ def test_potential(r, L, LQ, rho, point_func, pad_value, pauli_exclusion=False):
 		Boolean indicating whether to apply Pauli exclusion based on charge polarity or not.
 	"""
 	def compute():
-		V_expanded, _ = test_potential_factors(r, L, LQ, rho, point_func)
+		V_expanded, _ = test_potential_factors(r, L, LQ, rho, point_func, pad_value)
 		V = jnp.sum(V_expanded)
 		return V
 
 	if pauli_exclusion:
+		r = tuple(r)
 		r_sites, r_qsites = L[r], LQ[r]
 		three_particles = jnp.all(r_sites != pad_value)
 		one_particle = jnp.all(r_sites[1:] == pad_value)
@@ -147,20 +149,22 @@ def make_potential_energy_func(L, LQ, rho, point_func, pad_value):
 	
 	def func(r, q):
 		V_test = test_potential(r, L, LQ, rho, point_func, pad_value)
-		V = potential_for(V_test, LQ[r], q)
+		V = potential_for(V_test, LQ[tuple(r)], q)
 		U = potential_energy(V, q)
 		return U
 
 	return func
 
 
-@partial(jax.jit, static_argnums=[4, 5, 6, 7])
-def potential_energy_factors(r, q, L, LQ, rho, point_func, factor_limit, pad_value=-1):
+#@partial(jax.jit, static_argnums=[4, 5, 6, 7])
+def potential_energy_factors(i, r, q, L, LQ, rho, point_func, factor_limit, pad_value=-1):
 	"""
-	Computes the individual contribution to the potential energy of a particle at 'r'
+	Computes the individual contribution to the potential energy of a particle i at 'r'
 	of charge 'q' produced by each other particle. Assumes all potential factors are finite; 
 	i.e. Pauli exclusion is never violated in 'L'. 
 
+	i
+		Scalar, index of the particle.
 	r
 		Position we are computing the potential at. 1D, 2. 
 	q
@@ -180,11 +184,20 @@ def potential_energy_factors(r, q, L, LQ, rho, point_func, factor_limit, pad_val
 	pad_value
 		Integer scalar used for padding to remove most zero energy factors. Defaults to -1. 
 	"""
-	potential_factors, Lr_square = test_potential_factors(r, L, LQ, rho, point_func)
+	potential_factors, Lr_square = test_potential_factors(r, L, LQ, rho, point_func, pad_value)
+
+	# remove self potential
+	self_interact_mask = Lr_square == i
+	Lr_square = jnp.where(self_interact_mask, pad_value, Lr_square)
+	potential_factors = jnp.where(self_interact_mask, 0.0, potential_factors)
+
 	energy_factors = potential_energy(potential_factors, q)
-	nonzero_lattice_indices = jnp.nonzero(energy_factors, size=factor_limit, fill_value=pad_value)
-	indices = Lr_square[nonzero_lattice_indices]
-	energy_factors = energy_factors[nonzero_lattice_indices]
+
+	# reduce to nonzero factors 
+	pad_index = 2 * Lr_square.size
+	nonzero_lattice_indices = jnp.nonzero(energy_factors, size=factor_limit, fill_value=pad_index)
+	indices = Lr_square.at[nonzero_lattice_indices].get(mode="fill", fill_value=pad_value)
+	energy_factors = energy_factors.at[nonzero_lattice_indices].get(mode="fill", fill_value=0.0)
 	return energy_factors, indices
 
 
@@ -207,18 +220,18 @@ def compute_bonds(i, energy_factors, factor_indices, max_energy, pad_value):
 	factor_indices = factor_indices[sorted_indices]
 
 	def find_bond(args):
-		remaining_energies = args[1]
+		curr_index, _, remaining_energies = args
 		energy_sums = jnp.cumsum(remaining_energies)
-		index = jnp.searchsorted(energy_sums, max_energy, method="scan")	# change method for GPU
-		remaining_energies = remaining_energies.at[:index+1].set(0)
-		return index, remaining_energies
+		index = jnp.argmax(energy_sums < max_energy)
+		remaining_energies = zero_prefix(remaining_energies, index+1)
+		return index, curr_index, remaining_energies
 
-	def end_fn(args):
-		index, remaining_energies = args
-		return index == 0 and remaining_energies[0] == 0
+	def cond_fn(args):
+		curr_index, last_index, remaining_energies = args
+		return (curr_index != 0) | (remaining_energies[0] != 0)
 
-	index, _ = jax.lax.while_loop(end_fn, find_bond, (0, energy_factors))
-	factor_indices = factor_indices.at[index+1:].set(pad_value)
+	index = jax.lax.while_loop(cond_fn, find_bond, (0, 0, energy_factors))[1]
+	factor_indices = fill_suffix(factor_indices, index, pad_value)
 	return factor_indices
 
 
@@ -243,27 +256,28 @@ def compute_bound_states(all_bonds, pad_value):
 	curr_particle = jnp.int32(0)
 	visited = jnp.zeros(k, dtype=bool)
 	bound_states = jnp.zeros(k, dtype=int)
-	bound_state_count = jnp.int32(-1)
+	count = jnp.int32(-1)
 
 	def cond_fn(args):
 		visited = args[1]
 		return jnp.all(visited)
 
-	def get_molecule(curr_particle, visited, bound_states):
-		bound_state_count += 1
+	def get_molecule(curr_particle, visited, bound_states, count):
+		count += 1
 		molecule = compute_bound_state(curr_particle, all_bonds, pad_value)
-		bound_states = bound_states.at[molecule].set(bound_state_count)
-		visited = visited.at[molecule].set(True)
+		bound_states = jnp.where(molecule, count, bound_states)
+		visited = jnp.where(molecule, True, visited)
 		curr_particle += 1
-		return curr_particle, visited, bound_states
+		return curr_particle, visited, bound_states, count
 
 	def body_fn(args):
-		curr_particle, visited, bound_states = args
+		curr_particle, visited, _, _ = args
 		seen = visited[curr_particle]
 		next_fn = lambda j, *args: (j+1,) + args
 		return jax.lax.cond(seen, next_fn, get_molecule, *args)
 
-	bound_states = jax.lax.while_loop(cond_fn, body_fn, (curr_particle, visited, bound_states))[-1]
+	bound_states = jax.lax.while_loop(
+		cond_fn, body_fn, (curr_particle, visited, bound_states, count))[-2]
 	return bound_states
 
 
@@ -280,7 +294,7 @@ def get_particles(I, bound_states, pad_value):
 def get_boundstates(bound_states, pad_value):
 	I = jnp.arange(bound_states.shape[0])
 	max_state = jnp.max(bound_states)
-	I = I.at[max_state+1:].set(pad_value)
+	I = jnp.where(I <= max_state, I, pad_value)
 	return I
 
 
@@ -302,10 +316,11 @@ def centers_of_mass(R, M, bound_states):
 	k = R.shape[0]
 	position_sums = jnp.zeros((k, 2), dtype=int)
 	mass_sums = jnp.zeros((k,), dtype=int)
-	position_sums = position_sums.at[bound_states].add(M*R)
+	position_sums = position_sums.at[bound_states].add(jnp.expand_dims(M, axis=-1) * R)
 	mass_sums = mass_sums.at[bound_states].add(M)
 	# use a mask to handle padding
-	centers = jnp.where(mass_sums > 0, position_sums / mass_sums, 0)	
+	mass_sums_expanded = jnp.expand_dims(mass_sums, axis=-1)
+	centers = jnp.where(mass_sums_expanded > 0, position_sums / mass_sums_expanded, 0)	
 	return centers, mass_sums
 
 
@@ -376,8 +391,8 @@ def difference_arrays(V):
 	y_diffs = jnp.diff(V, axis=-1)
 	zero_row = jnp.zeros((1, V.shape[-1]))
 	zero_col = jnp.zeros((V.shape[0], 1))
-	x_delta = jnp.concatenate(zero_row, x_diffs, zero_row, axis=0)
-	y_delta = jnp.concatenate(zero_col, y_diffs, zero_col, axis=-1)
+	x_delta = jnp.concatenate((zero_row, x_diffs, zero_row), axis=0)
+	y_delta = jnp.concatenate((zero_col, y_diffs, zero_col), axis=-1)
 	return x_delta, y_delta
 
 
@@ -386,7 +401,7 @@ def generate_interaction_field(V):
 	Vx_delta, Vy_delta = difference_arrays(V)
 	x_component = (Vx_delta[1:, :] + Vx_delta[:-1, :]) / 2
 	y_component = (Vy_delta[:, 1:] + Vy_delta[:, :-1]) / 2
-	return jnp.stack(x_component, y_component)
+	return jnp.stack((x_component, y_component), axis=-1)
 
 
 @jax.jit
@@ -466,15 +481,15 @@ def masked(x, y, occupation_mask):
 	row = occupation_mask[x]
 	i = jnp.argmax(row)
 	v = jnp.max(row)
-	return v == 0 or y <= i
+	return (v == 0) | (y <= i)
 
 
 @partial(jax.jit, static_argnums=[0, 3])
 def generate_drive_field(n, R, top_field, mask_func):
 	occupied = occupation_mask(n, R)
 	field = jnp.broadcast_to(top_field, (n, n))
-	mask_func = lambda x, y: mask_func(x, y, occupied)
-	particle_mask = jnp.fromfunction(mask_func, (n, n), dtype=int)
+	mask_fn = lambda x, y: mask_func(x, y, occupied)
+	particle_mask = jnp.fromfunction(mask_fn, (n, n), dtype=int)
 	return jnp.stack((jnp.zeros((n, n)), particle_mask * field), axis=-1)
 
 
@@ -492,8 +507,9 @@ def brownian_noise(key, beta, gamma, num_samples):
 
 def compute_particle_velocity_bound(i, r, interaction_field, brownian_field, external_field, energy_field, 
 						   			transfer_field, mass, charge, molecule_mass, gamma, time_unit):
+	r = tuple(r)
 	nontransfer_force = ((charge * interaction_field[r]) + (mass * external_field[r]) 
-						 + (jnp.sqrt(mass) * brownian_field[r]))
+						 + (jnp.sqrt(mass) * brownian_field[i]))
 	transfer_force = mass * transfer_field[i]
 	nontransfer_velocity = nontransfer_force / (gamma * mass)
 	transfer_velocity = transfer_force / (gamma * molecule_mass)
@@ -505,22 +521,25 @@ def compute_particle_velocity_bound(i, r, interaction_field, brownian_field, ext
 
 def compute_boundstate_velocity_bounds(I, R, bound_states, interaction_field, 
 									   net_field, masses, coms, M, Q, gamma, time_unit):
-	masses_by_particle = masses[bound_states]
+	M_expanded = jnp.expand_dims(M, axis=-1)
+	Q_expanded = jnp.expand_dims(Q, axis=-1)
+	masses_by_particle = jnp.expand_dims(masses[bound_states], axis=-1)
 	coms_by_particle = coms[bound_states]
-	interact_velocities_by_particle = Q * interaction_field[R] / (gamma * masses_by_particle)
-	other_velocities_by_particle = M * net_field / (gamma * masses_by_particle)
+	interact_velocities_by_particle = (Q_expanded * interaction_field[R[:, 0], R[:, 1]] 
+									   / (gamma * masses_by_particle))
+	other_velocities_by_particle = M_expanded * net_field / (gamma * masses_by_particle)
 	net_velocities = interact_velocities_by_particle + other_velocities_by_particle
 	net_angular_velocities = calculate_torque(R, coms_by_particle, net_velocities)
 
 	def sum_velocities(i):
 		particle_mask = bound_states == i 
-		velocity = jnp.sum(particle_mask * net_velocities, axis=0)
+		velocity = jnp.sum(jnp.expand_dims(particle_mask, axis=-1) * net_velocities, axis=0)
 		angular_velocity = jnp.sum(particle_mask * net_angular_velocities, axis=0)
 		return velocity, angular_velocity
 
 	velocities, angular_velocities = jax.vmap(sum_velocities)(I)
 	distances = jnp.linalg.vector_norm(velocities, axis=-1) * time_unit
-	angular_distances = jnp.linalg.vector_norm(angular_velocities, axis=-1) * time_unit
+	angular_distances = angular_velocities * time_unit
 	return distances, angular_distances
 
 
@@ -579,7 +598,7 @@ def calculate_work(path, field, coupling_constant):
 
 	def add_work_step(i, vals):
 		work, total_work = vals
-		r = path[i]
+		r = tuple(path[i])
 		delta = steps[i]
 		field_val = field[r]
 		work_step = jnp.dot(field_val, delta)
@@ -608,7 +627,7 @@ def calculate_work_v2(path, field, coupling_constant):
 	end = jnp.argmin(path, axis=0)[0] - 1
 
 	def get_work_step(r, delta):
-		return jnp.dot(field[r], delta)
+		return jnp.dot(field[tuple(r)], delta)
 
 	work_steps = jax.vmap(get_work_step)(path, steps)
 	work_steps[end] = 0		# to remove contribution from last fake delta
@@ -620,9 +639,9 @@ def calculate_work_v2(path, field, coupling_constant):
 def calculate_total_work(total_path_work, brownian_field, external_field, 
 						 transfer_field, i, mass, r_start, r_end, d):
 	diff_norm = jnp.linalg.norm(r_end - r_start)
-	excess_force_magnitude = mass * (jnp.linalg.norm(external_field[r_end]) 
+	excess_force_magnitude = mass * (jnp.linalg.norm(external_field[tuple(r_end)]) 
 							 		 + jnp.linalg.norm(transfer_field[i]))
-	excess_force_magnitude += jnp.sqrt(mass) * jnp.linalg.norm(brownian_field[r_start])
+	excess_force_magnitude += jnp.sqrt(mass) * jnp.linalg.norm(brownian_field[i])
 	total_work = total_path_work + (excess_force_magnitude * (d - diff_norm))
 	return total_work
 
@@ -652,7 +671,7 @@ def calculate_boundstate_work(i, bound_states, net_field, R, M, start_com, end_c
 def calculate_end_field(brownian_field, external_field, energy_field, 
 						transfer_field, i, r_start, r_end, mass, gamma):
 	extra_field = jnp.sqrt(2 * energy_field[i] / mass) * gamma
-	return ((brownian_field[r_start] / jnp.sqrt(mass)) + external_field[r_end] 
+	return ((brownian_field[i] / jnp.sqrt(mass)) + external_field[tuple(r_end)] 
 			+ extra_field + transfer_field[i])
 
 
@@ -662,14 +681,14 @@ def calculate_torque(r, r_axis, f_vector):
 
 
 def torque_force(torque, r, r_axis):
- 	position_vec = r - r_axis
+	position_vec = r - r_axis
 	return cross_1D(torque, position_vec) / jnp.linalg.vector_norm(position_vec) ** 2
 
 
 def cross_1D(y_1D, x_2D):
-	y_3D = jnp.concatenate((jnp.array((0, 0)), y_1D))
-	x_3D = jnp.concatenate((x_2D, jnp.array((0,))))
-	return jnp.cross(y_3D, x_3D)[:1]
+	y_3D = jnp.concatenate((jnp.zeros(2), jnp.expand_dims(y_1D, axis=0)))
+	x_3D = jnp.concatenate((x_2D, jnp.zeros(1)))
+	return jnp.cross(y_3D, x_3D)[:2]
 
 
 def transferred_field(r_source, force_source, r_dest, m_block, I_block, torque):
@@ -712,10 +731,11 @@ def generate_full_transferred_field(I, net_field, R, bound_states, masses, coms,
 	pad_mask = I != pad_value
 
 	def collect_by_molecule(i):
-		particles_mask = pad_mask & (molecules_I == i)
-		field_part = jnp.sum(particles_mask * field_parts, axis=0)
-		weighted_torque = jnp.sum(particles_mask * weighted_torques, axis=0)
-		torque_field_part = jnp.sum(particles_mask * torque_field_parts, axis=0)
+		particle_mask = pad_mask & (molecules_I == i)
+		particle_mask_expanded = jnp.expand_dims(particle_mask, axis=-1)
+		field_part = jnp.sum(particle_mask_expanded * field_parts, axis=0)
+		weighted_torque = jnp.sum(particle_mask * weighted_torques, axis=0)
+		torque_field_part = jnp.sum(particle_mask_expanded * torque_field_parts, axis=0)
 		return field_part, weighted_torque, torque_field_part
 
 	molecule_indices = jnp.arange(masses.shape[0])
@@ -725,7 +745,7 @@ def generate_full_transferred_field(I, net_field, R, bound_states, masses, coms,
 		r, molecule_id = R[i], bound_states[i]
 		field_part = field_parts[molecule_id]
 		torque_field_part1 = torque_field_parts[molecule_id]
-		weighted_torque = weighted_torque[molecule_id]
+		weighted_torque = weighted_torques[molecule_id]
 		torque_field_part2 = cross_1D(weighted_torque, r)
 		return field_part + torque_field_part1 + torque_field_part2
 
@@ -733,7 +753,7 @@ def generate_full_transferred_field(I, net_field, R, bound_states, masses, coms,
 	return transfer_field
 
 
-def transfer_mask(excess_works, potential_energies, epilson):
+def transfer_mask(excess_works, potential_energies, epsilon):
 	return excess_works < epsilon * potential_energies
 
 
@@ -766,11 +786,11 @@ def calculate_excitations(i, R, L, work, delta):
 	r_square, r_square_positions = centered_square(L, r, delta)
 	distances = lattice_distances_2D(r, r_square_positions, n)
 
-	excited_mask = (distances <= delta) and (distances != 0)	# exclude r itself from excitation
+	excited_mask = (distances <= delta) & (distances != 0)	# exclude r itself from excitation
 	excited_particle_mask = (r_square != 0) & excited_mask
 
 	inv_distances = 1 / distances
-	inv_distances = inv_distances.at[inv_distances == jnp.inf].set(0)
+	inv_distances = jnp.where(inv_distances == jnp.inf, 0.0, inv_distances)
 	# factor of 2 to account for two particle sites at each posiiton
 	normalizer = 1 / jnp.sum(2 * inv_distances * excited_mask)	
 
