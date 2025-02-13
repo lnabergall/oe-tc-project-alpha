@@ -16,7 +16,7 @@ from geometry import *
 
 def violates_strong_pauli_exclusion(R):
 	"""Checks for three particles at the same point."""
-	_, counts = jnp.unique(R, axis=0, return_counts=True)
+	_, counts = jnp.unique(R, axis=0, return_counts=True, size=R.shape[0], fill_value=-1)
 	return jnp.any(counts >= 3)
 
 
@@ -260,7 +260,7 @@ def compute_bound_states(all_bonds, pad_value):
 
 	def cond_fn(args):
 		visited = args[1]
-		return jnp.all(visited)
+		return ~jnp.all(visited)
 
 	def get_molecule(curr_particle, visited, bound_states, count):
 		count += 1
@@ -273,11 +273,11 @@ def compute_bound_states(all_bonds, pad_value):
 	def body_fn(args):
 		curr_particle, visited, _, _ = args
 		seen = visited[curr_particle]
-		next_fn = lambda j, *args: (j+1,) + args
+		next_fn = lambda j, *_args: (j+1,) + _args
 		return jax.lax.cond(seen, next_fn, get_molecule, *args)
 
-	bound_states = jax.lax.while_loop(
-		cond_fn, body_fn, (curr_particle, visited, bound_states, count))[-2]
+	curr_particle, visited, bound_states, count = jax.lax.while_loop(
+		cond_fn, body_fn, (curr_particle, visited, bound_states, count))
 	return bound_states
 
 
@@ -335,8 +335,8 @@ def moments_of_inertia(R, M, coms, bound_states, n):
 
 
 def move(R, curr_coms, new_coms):
-	"""Move each particle using reference points."""
-	return R + new_coms - curr_coms
+	"""Move each particle using reference points. Should be a valid lattice translation."""
+	return R + (new_coms - curr_coms).astype(int)
 
 
 def standardize_angle(theta):
@@ -347,7 +347,7 @@ def standardize_angle(theta):
 def rotate(R, coms, thetas):
 	"""
 	Rotates each particle about a given center of mass by a multiple 'theta' of 90 degrees,
-	upper bounded by 270 degrees. 
+	upper bounded by 270 degrees. Then shifts each particle to the nearest lattice site. 
 
 	R
 		Array of particle positions. 2D, kx2.
@@ -376,13 +376,14 @@ def rotate(R, coms, thetas):
 	rotation_branches = tuple(partial(origin_rotate, theta=i) for i in (0, 90, 180, 270))
 	
 	def rotation_fn(r, com, theta):
-		theta_idx = theta // 90
+		theta_idx = (theta // 90).astype(int)
 		r_centered = r - com
 		r_centered_rotated = jax.lax.switch(theta_idx, rotation_branches, r_centered)
 		r_rotated = r_centered_rotated + com
 		return r_rotated
 
 	R_rotated = jax.vmap(rotation_fn)(R, coms, thetas)
+	R_rotated = jnp.rint(R_rotated).astype(int) 	# should be a uniform shift
 	return R_rotated
 
 
@@ -647,7 +648,8 @@ def calculate_total_work(total_path_work, brownian_field, external_field,
 
 
 def calculate_boundstate_work(i, bound_states, net_field, R, M, start_com, end_com, end_theta):
-	particle_mask = bound_states == i
+	particle_mask = jnp.expand_dims(bound_states == i, axis=-1)
+	M = jnp.expand_dims(M, axis=-1)
 
 	# total force
 	forces = M * particle_mask * net_field
@@ -798,7 +800,7 @@ def calculate_excitations(i, R, L, work, delta):
 	return excitations, r_square_positions
 
 
-def excitation_mask(excess_works, potential_energies, epilson):
+def excitation_mask(excess_works, potential_energies, epsilon):
 	return excess_works >= epsilon * potential_energies
 
 
@@ -812,12 +814,13 @@ def merge_excitations(R, L, excitation_arrays, position_arrays):
 		or filled by 1 or 2 particles. Assumes at most two particles may occupy each site. 
 		2D, nxn. 
 	excitation_arrays
-		Array where each row is a 2D array of energies. 3D, mxdxd.
+		Array where each row is a 2D array of energies. 3D, kxdxd.
 	position_arrays
 		Array where each row is a 3D array giving the positions corresponding to the energies
-		in excitation_arrays. 4D, mxdxdx2. 
+		in excitation_arrays. 4D, kxdxdx2. 
 	"""
-	excitation_vectors = normalize(position_arrays - R)
+	R_expanded = jnp.expand_dims(jnp.expand_dims(R, axis=1), axis=1)
+	excitation_vectors = normalize(position_arrays - R_expanded)
 	excitation_arrays = jnp.expand_dims(excitation_arrays, axis=-1) * excitation_vectors
 	energy_field = jnp.zeros(L.shape + (2,), dtype=float)
 	positions = position_arrays.reshape(-1, 2)
@@ -834,7 +837,7 @@ def calculate_excitation_work(i, r_start, r_end, energy_field):
 	update_vec = r_end - r_start
 	excitation = energy_field[i]
 	energy = jnp.linalg.vector_norm(excitation)
-	excitation_work = jnp.max(jnp.array(jnp.dot(excitation, update_vec), energy))
+	excitation_work = jnp.max(jnp.array((jnp.dot(excitation, update_vec), energy)))
 	total_excitation_work = jnp.linalg.vector_norm(excitation)
 	return excitation_work, total_excitation_work
 
@@ -889,7 +892,7 @@ def add_boundstate_energy_transfers(I, I_bound_states, excess_works, total_force
 		FI_curr_molecules = curr_bound_states.at[FI].get(mode="fill", fill_value=0)
 		FI_prev_molecules = prev_bound_states.at[FI].get(mode="fill", fill_value=0)
 		A_mask = jnp.logical_xor(FI_curr_molecules, FI_prev_molecules)
-		i_A = prev_bound_states[FI_prev_molecules[jnp.unravel(jnp.argmax(A_mask), FI.shape)]]
+		i_A = prev_bound_states[FI_prev_molecules[jnp.unravel_index(jnp.argmax(A_mask), FI.shape)]]
 		B_mask = FI_curr_molecules == i_B
 		A_factor = jnp.sum(is_receiving * A_mask * B_mask * EF)
 		return A_factor, i_A
@@ -902,17 +905,21 @@ def add_boundstate_energy_transfers(I, I_bound_states, excess_works, total_force
 		A_factor_prev, _ = calculate_factor(EF_prev, FI_prev, i_B, is_receiving)
 		return A_factor_prev - A_factor_curr, i_A
 
-	molecule_delta_factors, transfer_bound_states = jax.vmap(aggregate_factors)(I) 	
+	molecule_delta_factors, transfer_bound_states = jax.vmap(aggregate_factors)(
+		I, curr_energy_factors, curr_factor_indices, prev_energy_factors, prev_factor_indices) 	
 
 	normalizers = compute_group_sums(molecule_delta_factors, transfer_bound_states, l)
+	normalizers = jnp.expand_dims(normalizers, axis=-1)
 
 	# assemble excess works and energy vectors
-	excess_works = excess_works[I_bound_states[transfer_bound_states]]
+	excess_works = jnp.expand_dims(excess_works[I_bound_states[transfer_bound_states]], axis=-1)
 	total_forces = total_forces[I_bound_states[transfer_bound_states]]
 	total_torques = total_torques[I_bound_states[transfer_bound_states]]
 	coms = coms[transfer_bound_states]
 	f_taus = jax.vmap(torque_force)(total_torques, R, coms)
 	unit_energy_vectors = normalize(total_forces + f_taus)
+
+	molecule_delta_factors = jnp.expand_dims(molecule_delta_factors, axis=-1)
 
 	energy_field = energy_field.at[:].add(
 		molecule_delta_factors * excess_works * unit_energy_vectors / normalizers)

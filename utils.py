@@ -91,7 +91,7 @@ def normalize(A):
 
 def discrete_ball_map(indices):
 	map_matrix = jnp.array([[1, -1], [1, 1]])
-	return (indices @ map_matrix.T ) / 2	# divide by 2 after for possible efficiency
+	return (indices @ map_matrix.T ) // 2	# divide by 2 after for possible efficiency
 
 
 def bfs(edges, i, pad_value):

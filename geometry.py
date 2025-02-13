@@ -62,17 +62,18 @@ def canonical_shortest_path(r_start, r_end, n, pad_value):
 		element_within_square = r_start + (r_diff_sign * jnp.array((half + parity, half)))
 		element_outside_square = element_square + (i_diff * step_outside_square)
 		# mod n here to account for periodicity
-		element_on_path = jax.lax.select(
+		element_on_path = jnp.where(
 			i <= i_square, element_within_square, element_outside_square) % n 	
-		element = jax.lax.select(i <= length, element_on_path, padding)
+		element = jnp.where(i <= length, element_on_path, padding)
 		return element
 
-	path = jnp.fromfunction(path_creator, (n,), dtype=int)
+	path = jnp.fromfunction(path_creator, (n,), dtype=r_start.dtype)
 	return path
 
 
 def shift_path(path, r): 
-	return path + r - path[0]
+	# result should be path of lattice points
+	return (path + r - path[0]).astype(int)
 
 
 def append_on_path(path, r):
