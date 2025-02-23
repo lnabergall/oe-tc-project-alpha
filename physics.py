@@ -20,9 +20,9 @@ def violates_strong_pauli_exclusion(R):
 	return jnp.any(counts >= 3)
 
 
-def violates_pauli_exclusion(q_point, q):
+def violates_pauli_exclusion(q_point, q, pad_value):
 	"""Checks if placing a test particle at 'r' would place three particles at the same point."""
-	too_many_particles = jnp.count_nonzero(q_point) >= 2
+	too_many_particles = jnp.count_nonzero(q_point != pad_value) >= 2
 	like_charges = jnp.any(q_point == q)
 	return too_many_particles | like_charges
 
@@ -45,17 +45,34 @@ def potential_everywhere(R, Q, positions, point_func):
 	return V
 
 
-def potential_energy_all(R, Q, V):
+def potential_all(I, R, L, LQ, rho, point_func, pad_value):
+	n = L.shape[0]
+
+	def local_potential(i, r):
+		Lr_square, Lr_square_positions = centered_square(L, r, rho)
+		Qr_square, _ = centered_square(LQ, r, rho)
+		r_ = tuple(r)
+		self_mask = jnp.isin(Lr_square, i)
+		Lr_square = jnp.where(self_mask, pad_value, Lr_square)
+		Qr_square = jnp.where(self_mask, pad_value, Qr_square)
+		distances = lattice_distances_2D(r, Lr_square_positions, n)
+		V_expanded = Qr_square * jnp.expand_dims(point_func(distances), -1)
+		V_expanded = jnp.where(Lr_square == pad_value, 0.0, V_expanded)
+		V = jnp.sum(V_expanded)
+		return V
+
+	V = jax.vmap(local_potential)(I, R)
+	return V
+
+
+def potential_energy_all(Q, V):
 	"""
-	R
-		Array of particle positions. 2D, kx2.
 	Q
 		Array of particle charges. 1D, k.
 	V
-		Array of potentials at all positions in space. 2D, nxn.
+		Array of potentials at all positions in space. 1D, k.
 	"""
-	U = Q * V[R[:, 0], R[:, 1]]
-	return U
+	return Q * V
 
 
 def test_potential_factors(r, L, LQ, rho, point_func, pad_value):
@@ -132,12 +149,12 @@ def test_potential(r, L, LQ, rho, point_func, pad_value, pauli_exclusion=False):
 	return V
 
 
-def potential_for(V_test, q_point, q):
+def potential_for(V_test, q_point, q, pad_value):
 	"""
 	Calculates the potential of a test particle from the test potential, 
 	incoporating Pauli exclusion of like charges.
 	"""
-	violates_pe = violates_pauli_exclusion(q_point, q)
+	violates_pe = violates_pauli_exclusion(q_point, q, pad_value)
 	return jnp.where(violates_pe, jnp.inf, V_test)
 
 
@@ -145,11 +162,11 @@ def potential_energy(V, q):
 	return jnp.where(V == jnp.inf, jnp.inf, q * V)
 
 
-def make_potential_energy_func(L, LQ, rho, point_func, pad_value):
+def make_potential_energy_func(L, LQ, rho, point_func, L_pad_value, LQ_pad_value):
 	
 	def func(r, q):
-		V_test = test_potential(r, L, LQ, rho, point_func, pad_value)
-		V = potential_for(V_test, LQ[tuple(r)], q)
+		V_test = test_potential(r, L, LQ, rho, point_func, L_pad_value)
+		V = potential_for(V_test, LQ[tuple(r)], q, LQ_pad_value)
 		U = potential_energy(V, q)
 		return U
 
@@ -328,7 +345,7 @@ def moments_of_inertia(R, M, coms, bound_states, n):
 	"""Returns the moment of inertia of each bound state in a 0-padded 'k' length 1D Array."""
 	k = R.shape[0]
 	MOIs = jnp.zeros((k,))
-	arm_lengths = lattice_distances(R, coms, n)
+	arm_lengths = lattice_distances(R, coms, n) ** 2
 	particle_MOIs = M * arm_lengths
 	MOIs = MOIs.at[bound_states].add(particle_MOIs)
 	return MOIs
@@ -506,6 +523,12 @@ def brownian_noise(key, beta, gamma, num_samples):
 	return samples
 
 
+def energy_to_velocity(field, m):
+	norm = jnp.linalg.vector_norm(field, axis=-1, keepdims=True)
+	speed = jnp.sqrt(2 * norm / m)
+	return speed * jnp.where(norm == 0.0, field, field / norm)
+
+
 def compute_particle_velocity_bound(i, r, interaction_field, brownian_field, external_field, energy_field, 
 						   			transfer_field, mass, charge, molecule_mass, gamma, time_unit):
 	r = tuple(r)
@@ -514,7 +537,7 @@ def compute_particle_velocity_bound(i, r, interaction_field, brownian_field, ext
 	transfer_force = mass * transfer_field[i]
 	nontransfer_velocity = nontransfer_force / (gamma * mass)
 	transfer_velocity = transfer_force / (gamma * molecule_mass)
-	energy_velocity = jnp.sqrt(2 * energy_field[i] / mass)
+	energy_velocity = energy_to_velocity(energy_field[i], mass)
 	speed = jnp.linalg.vector_norm(nontransfer_velocity + transfer_velocity + energy_velocity)
 	distance = speed * time_unit
 	return distance
@@ -672,7 +695,7 @@ def calculate_boundstate_work(i, bound_states, net_field, R, M, start_com, end_c
 
 def calculate_end_field(brownian_field, external_field, energy_field, 
 						transfer_field, i, r_start, r_end, mass, gamma):
-	extra_field = jnp.sqrt(2 * energy_field[i] / mass) * gamma
+	extra_field = energy_to_velocity(energy_field[i], mass) * gamma
 	return ((brownian_field[i] / jnp.sqrt(mass)) + external_field[tuple(r_end)] 
 			+ extra_field + transfer_field[i])
 
@@ -724,7 +747,8 @@ def generate_full_transferred_field(I, net_field, R, bound_states, masses, coms,
 		r, molecule_id = R[i], bound_states[i]
 		mass, com, MOI = masses[molecule_id], coms[molecule_id], MOIs[molecule_id]
 		field_i = net_field[i]
-		weighted_torque_i = mass * calculate_torque(r, com, field_i) / MOI
+		weight = jnp.where(MOI == 0.0, 0.0, mass / MOI)
+		weighted_torque_i = weight * calculate_torque(r, com, field_i)
 		torque_field_part = cross_1D(weighted_torque_i, -r)
 		return field_i, weighted_torque_i, torque_field_part
 

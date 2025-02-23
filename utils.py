@@ -86,7 +86,8 @@ def compute_group_sums(A, B, num_groups):
 
 def normalize(A):
 	"""Normalize an array A of vectors."""
-	return A / jnp.linalg.vector_norm(A, axis=-1, keepdims=True)
+	divisors = jnp.linalg.vector_norm(A, axis=-1, keepdims=True)
+	return jnp.where(divisors == 0.0, A, A / divisors) 
 
 
 def discrete_ball_map(indices):

@@ -190,9 +190,9 @@ def generate_unlabeled_lattice(R, n):
 	return L
 
 
-def generate_property_lattice(L, C, pad_value):
+def generate_property_lattice(L, C, L_pad_value, C_pad_value):
 	"""Gather property values from a 1D Array C using indices in an Array L while ignoring padding."""
-	return jnp.where(L != pad_value, C[L], pad_value)
+	return jnp.where(L != L_pad_value, C[L], C_pad_value)
 
 
 def independent_partition(R, L, part_size, min_sep, pad_value):
