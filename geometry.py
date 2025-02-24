@@ -6,6 +6,14 @@ import jax.numpy as jnp
 from utils import *
 
 
+def cylindrical_coordinates(A, n):
+	"""
+	Convert an array A of 2D vectors to cylindrical coordinates, 
+	with a periodic first or 'x' dimension.
+	"""
+	return A.at[..., 0].set(A[..., 0] % n)
+
+
 @partial(jax.jit, static_argnums=[1])
 def periodic_norm(x_diff, n):
 	return jnp.min(jnp.stack((x_diff, n - x_diff)))
