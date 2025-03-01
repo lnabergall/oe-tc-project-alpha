@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 
 from system import ParticleSystem as System
+from log import setup_logging
 
 warnings.filterwarnings('error')  # turn warnings into errors
 
@@ -54,4 +55,5 @@ particle_system = System(n, k, t, N, T_M, T_Q, beta, gamma, time_unit, speed_lim
 						 boundstate_nbhr_limit, key, kappa, proposal_samples, field_preloads)
 
 if __name__ == '__main__':
+	setup_logging()
 	data, internal_data, key = particle_system.run(2)

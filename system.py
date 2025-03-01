@@ -9,10 +9,13 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
+from loguru import logger
+
 from sample import *
 from physics import *
 from geometry import *
 from utils import *
+from log import jax_log_info
 
 
 class InternalData(NamedTuple):
@@ -253,12 +256,12 @@ class ParticleSystem:
 		# initialize data, e.g. positions
 		key, key_init = jax.random.split(self.key)
 		data, internal_data = self.initialize(key_init)
-		jax.debug.print("initial R: {}", data.R)
+		jax_log_info("initial R: {}", data.R)
 
 		# start loop
 		step_fn = lambda i, args: self.step(*args)
 		data, internal_data, key = jax.lax.fori_loop(0, steps, step_fn, (data, internal_data, key))
-		jax.debug.print("final R: {}", data.R)
+		jax_log_info("final R: {}", data.R)
 
 		return data, internal_data, key
 
@@ -281,7 +284,7 @@ class ParticleSystem:
 		P_particles = independent_partition(data.R, data.L, self.particle_limit, 
 											2 * self.speed_limit, self.pad_value)
 		internal_data = internal_data._replace(P_particles=P_particles)
-		jax.debug.print("partition: {}", P_particles)
+		jax_log_info("partition: {}", P_particles)
 
 		# scan over partition
 		particle_scan_fn = lambda carry, I: self.particle_gibbs_step(carry[0], I, carry[1])
@@ -304,9 +307,9 @@ class ParticleSystem:
 			excitation_works=excitation_works, total_excitation_works=total_excitation_works)
 		potential_energies = data.potential_energies
 
-		jax.debug.print("logdensities: {}", logdensities)
-		jax.debug.print("sample info: {}", (p_accepts, accepts))
-		jax.debug.print("post-particle R: {}", data.R)
+		jax_log_info("logdensities: {}", logdensities)
+		jax_log_info("sample info: {}", (p_accepts, accepts))
+		jax_log_info("post-particle R: {}", data.R)
 
 		# reset energy and transfer fields
 		data = self.reset_fields(data)
@@ -348,7 +351,7 @@ class ParticleSystem:
 			boundstate_proposal_energies=proposal_energies, total_forces=total_forces, 
 			total_torques=total_torques, boundstate_deltaEs=deltaEs, boundstate_B_paths=B_paths)
 
-		jax.debug.print("post-molecule R: {}", data.R)
+		jax_log_info("post-molecule R: {}", data.R)
 
 		# generate excitation emissions
 		energy_field = self.generate_excitations(data, excess_works, potential_energies)
@@ -395,7 +398,7 @@ class ParticleSystem:
 		# compute particle potential energies
 		potential = potential_all(self.I, data.R, data.L, data.LQ, self.rho, self.point_func, self.pad_value)
 		potential_energies = potential_energy_all(self.Q, potential)
-		jax.debug.print("potential, potential_energies: {} \n {} \n\n", potential, potential_energies)
+		jax_log_info("potential, potential_energies: {} \n {} \n\n", potential, potential_energies)
 
 		# get bound states and transfer excess work
 		data, LQ, bound_states, masses, coms, MOIs, _, _ = self.determine_bound_states(data, I)
@@ -660,7 +663,7 @@ class ParticleSystem:
 		drive_work, total_drive_work = calculate_work(path, data.external_field, mass)
 		excitation_work, total_excitation_work = calculate_excitation_work(
 			i, position, proposed_position, data.energy_field)
-		jax.debug.print("brownian, transfer, drive, excitation: {} {} {} {}", 
+		jax_log_info("brownian, transfer, drive, excitation: {} {} {} {}", 
 						brownian_work, transfer_work, drive_work, excitation_work)
 		work = brownian_work + transfer_work + drive_work + excitation_work
 		total_work = calculate_total_work(
@@ -668,7 +671,7 @@ class ParticleSystem:
 			data.brownian_field, data.external_field, data.transfer_field, 
 			i, mass, position, proposed_position, velocity_bound)
 
-		jax.debug.print("energy, work, deltaE, B_path: {} {} {} {}", energy, work, deltaE, B_path)
+		jax_log_info("energy, work, deltaE, B_path: {} {} {} {}", energy, work, deltaE, B_path)
 		logdensity = self.beta * (work - deltaE - B_path)
 		# return both, for excess work and work applied even if proposal rejected
 		return (logdensity, work, total_work), (path, energy, proposal_energy, deltaE, B_path,
