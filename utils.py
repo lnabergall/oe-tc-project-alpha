@@ -20,6 +20,10 @@ def replace(A, val1, val2):
 	return jnp.where(A == val1, val2, A)
 
 
+def update(A, M, V):
+	return jnp.where(M, V, A)
+
+
 def place_2D(R, M, P):
 	"""Assign values from P into R at the row indices indicated by the 1D mask M."""
 	M = jnp.broadcast_to(jnp.expand_dims(M, -1), M.shape + (2,))
@@ -45,6 +49,17 @@ def remove_rows_jit(A, I, pad_value=-1):
 	keep_indices = jnp.where(keep_mask, size=k, fill_value=k+1)
 	A_minus = A.at[keep_indices].get(mode="fill", fill_value=pad_value)
 	return A_minus
+
+
+def compactify_partition(P, V, k, pad_value):
+	"""
+	Convert values 'V' on a padded 2D partition 'P' into a 1D properties array. 
+	Assumes P is a partition of k elements.
+	"""
+	P = jnp.where(P == pad_value, 2*k, P)
+	V_comp = jnp.zeros((k,) + V.shape[2:], dtype=V.dtype)
+	V_comp = V_comp.at[P].set(V, mode="drop")
+	return V_comp
 
 
 def expand_partition(P, part_size, pad_value):

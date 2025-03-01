@@ -1,7 +1,11 @@
+import warnings
+
 import jax
 import jax.numpy as jnp
 
 from system import ParticleSystem as System
+
+warnings.filterwarnings('error')  # turn warnings into errors
 
 jnp.set_printoptions(precision=3, suppress=True)
 
@@ -39,6 +43,7 @@ particle_limit = 10
 boundstate_limit = 10
 boundstate_nbhr_limit = 10
 
+key = jax.random.key(12)
 kappa = 50
 proposal_samples = 5
 field_preloads = 2
@@ -46,12 +51,7 @@ field_preloads = 2
 particle_system = System(n, k, t, N, T_M, T_Q, beta, gamma, time_unit, speed_limit, boundstate_speed_limit, 
 						 mu, rho, point_func, energy_lower_bound, factor_limit, bond_energy, alpha, epsilon, 
 						 delta, pad_value, charge_pad_value, particle_limit, boundstate_limit, 
-						 boundstate_nbhr_limit, kappa, proposal_samples, field_preloads)
-
-# import warnings
-
-# warnings.filterwarnings('error')  # turn warnings into errors
+						 boundstate_nbhr_limit, key, kappa, proposal_samples, field_preloads)
 
 if __name__ == '__main__':
-	key = jax.random.key(12)
-	data, key = particle_system.run(2, key)
+	data, internal_data, key = particle_system.run(2)

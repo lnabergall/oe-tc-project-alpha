@@ -40,7 +40,7 @@ def using_periodicity(x_diff, n):
 
 
 @partial(jax.jit, static_argnums=[2, 3])
-def canonical_shortest_path(r_start, r_end, n, pad_value):
+def canonical_shortest_path(r_start, r_end, max_length, n, pad_value):
 	"""
 	Returns a canonical shortest path between r_start and r_end, where we take 
 	a staircase path until we reach a straight line to r_end. 
@@ -75,7 +75,7 @@ def canonical_shortest_path(r_start, r_end, n, pad_value):
 		element = jnp.where(i <= length, element_on_path, padding)
 		return element
 
-	path = jnp.fromfunction(path_creator, (n,), dtype=r_start.dtype)
+	path = jnp.fromfunction(path_creator, (max_length,), dtype=r_start.dtype)
 	return path
 
 
@@ -201,6 +201,10 @@ def generate_unlabeled_lattice(R, n):
 def generate_property_lattice(L, C, L_pad_value, C_pad_value):
 	"""Gather property values from a 1D Array C using indices in an Array L while ignoring padding."""
 	return jnp.where(L != L_pad_value, C[L], C_pad_value)
+
+
+def partition_size(n, min_sep):
+	return ceil_div(n, min_sep) ** 2
 
 
 def independent_partition(R, L, part_size, min_sep, pad_value):
