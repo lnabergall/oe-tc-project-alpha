@@ -20,106 +20,106 @@ from log import jax_log_info
 
 class InternalData(NamedTuple):
     # system
-    time: int                                         # time step
+    time: int                                       # time step
 
     # particle sampling
-    P_particles: jax.Array = None                     # independent Gibbs partition. 2D, qxp. 
-    proposed_positions: jax.Array = None             # proposed particle positions. 2D, kx2.
-    logdensities: jax.Array = None                     # proposal logdensities. 1D, k.
-    p_accepts: jax.Array = None                        # acceptance probabilities. 1D, k.
-    accepts: jax.Array = None                         # acceptance indicators. 1D, k, bool.
+    P_particles: jax.Array = None                   # independent Gibbs partition. 2D, qxp. 
+    proposed_positions: jax.Array = None            # proposed particle positions. 2D, kx2.
+    logdensities: jax.Array = None                  # proposal logdensities. 1D, k.
+    p_accepts: jax.Array = None                     # acceptance probabilities. 1D, k.
+    accepts: jax.Array = None                       # acceptance indicators. 1D, k, bool.
 
     ## particle physics
     # kinetics
-    velocity_bounds: jax.Array = None                 # velocity bounds. 1D, k.
+    velocity_bounds: jax.Array = None               # velocity bounds. 1D, k.
     paths: jax.Array = None                         # proposal paths. 3D, kxsx2.
 
     # energetics
-    energies: jax.Array = None                         # energies. 1D, k.
+    energies: jax.Array = None                      # energies. 1D, k.
     proposal_energies: jax.Array = None             # proposal energies. 1D, k.
-    deltaEs: jax.Array = None                         # proposal energies - energies. 1D, k.
-    B_paths: jax.Array = None                         # energy barriers encountered along the paths. 1D, k.
+    deltaEs: jax.Array = None                       # proposal energies - energies. 1D, k.
+    B_paths: jax.Array = None                       # energy barriers encountered along the paths. 1D, k.
 
     # work
-    transfer_works: jax.Array = None                 # work done by transfer field. 1D, k.
-    total_transfer_works: jax.Array = None             # total work done by transfer field this step. 1D, k.
-    brownian_works: jax.Array = None                 # work done by Brownian field. 1D, k.
-    total_brownian_works: jax.Array = None             # total work done by Brownian field this step. 1D, k.
-    drive_works: jax.Array = None                     # work done by the external drive. 1D, k.
+    transfer_works: jax.Array = None                # work done by transfer field. 1D, k.
+    total_transfer_works: jax.Array = None          # total work done by transfer field this step. 1D, k.
+    brownian_works: jax.Array = None                # work done by Brownian field. 1D, k.
+    total_brownian_works: jax.Array = None          # total work done by Brownian field this step. 1D, k.
+    drive_works: jax.Array = None                   # work done by the external drive. 1D, k.
     total_drive_works: jax.Array = None             # total work done by the external drive this step. 1D, k.
-    excitation_works: jax.Array = None                 # work done by the energy field. 1D, k.
-    total_excitation_works: jax.Array = None         # total work done by the energy field this step. 1D, k.
+    excitation_works: jax.Array = None              # work done by the energy field. 1D, k.
+    total_excitation_works: jax.Array = None        # total work done by the energy field this step. 1D, k.
     works: jax.Array = None                         # work done during the proposed updates. 1D, k.
-    total_works: jax.Array = None                     # total work done this time step. 1D, k.
-    excess_works: jax.Array = None                     # total work - work. 1D, k.
+    total_works: jax.Array = None                   # total work done this time step. 1D, k.
+    excess_works: jax.Array = None                  # total work - work. 1D, k.
 
     # bound state sampling
-    P_boundstates: jax.Array = None                  # independent Gibbs partition. 2D, uxv.
+    P_boundstates: jax.Array = None                 # independent Gibbs partition. 2D, uxv.
     proposed_coms: jax.Array = None                 # proposed centers of mass. 2D, kx2.
     proposed_orientations: jax.Array = None         # proposed orientations. 1D, k.
-    boundstate_logdensities: jax.Array = None         # proposal logdensities. 1D, k.
-    boundstate_p_accepts: jax.Array = None             # acceptance probabilities. 1D, k.
-    boundstate_accepts: jax.Array = None             # acceptance indicators. 1D, k, bool.
+    boundstate_logdensities: jax.Array = None       # proposal logdensities. 1D, k.
+    boundstate_p_accepts: jax.Array = None          # acceptance probabilities. 1D, k.
+    boundstate_accepts: jax.Array = None            # acceptance indicators. 1D, k, bool.
 
     # bound state physics
     # kinetics
-    linear_velocity_bounds: jax.Array = None         # linear velocity bounds. 1D, k.
-    angular_velocity_bounds: jax.Array = None         # angular velocity bounds. 1D, k.
+    linear_velocity_bounds: jax.Array = None        # linear velocity bounds. 1D, k.
+    angular_velocity_bounds: jax.Array = None       # angular velocity bounds. 1D, k.
     com_paths: jax.Array = None                     # center of mass proposal paths. 3D, kxrx2.
 
     # energetics
-    boundstate_energies: jax.Array = None             # energies. 1D, k.
-    boundstate_proposal_energies: jax.Array = None     # proposal energies. 1D, k.
-    boundstate_deltaEs: jax.Array = None             # proposal energies - energies. 1D, k.
-    boundstate_B_paths: jax.Array = None             # energy barriers encountered along the com paths. 1D, k. 
+    boundstate_energies: jax.Array = None           # energies. 1D, k.
+    boundstate_proposal_energies: jax.Array = None  # proposal energies. 1D, k.
+    boundstate_deltaEs: jax.Array = None            # proposal energies - energies. 1D, k.
+    boundstate_B_paths: jax.Array = None            # energy barriers encountered along the com paths. 1D, k. 
 
     # work
-    transferred_excess_works: jax.Array = None         # excess work transferred to bound states. 1D, k.
-    boundstate_excess_works: jax.Array = None         # excess work recieved by bound states. 1D, k.
-    total_forces: jax.Array = None                     # total force experienced by bound states. 2D, kx2. 
+    transferred_excess_works: jax.Array = None      # excess work transferred to bound states. 1D, k.
+    boundstate_excess_works: jax.Array = None       # excess work recieved by bound states. 1D, k.
+    total_forces: jax.Array = None                  # total force experienced by bound states. 2D, kx2. 
     total_torques: jax.Array = None                 # total torque experienced by bound states. 1D, k.
-    boundstate_works: jax.Array = None                 # work done during the proposed updates. 1D, k.
+    boundstate_works: jax.Array = None              # work done during the proposed updates. 1D, k.
 
 
 class SystemData(NamedTuple):
     # system
     R: jax.Array                            # particle positions. 2D, kx2.
     L: jax.Array = None                     # labeled occupation lattice. 3D, nxnx3.
-    LQ: jax.Array = None                     # charge-labeled occupation lattice. 3D, nxnx3.
-    L_test: jax.Array = None                 # labeled occupation lattice for test particles. 3D, nxnx3.
-    LQ_test: jax.Array = None                 # charge-labeled occupation lattice for test particles. 3D, nxnx3.
+    LQ: jax.Array = None                    # charge-labeled occupation lattice. 3D, nxnx3.
+    L_test: jax.Array = None                # labeled occupation lattice for test particles. 3D, nxnx3.
+    LQ_test: jax.Array = None               # charge-labeled occupation lattice for test particles. 3D, nxnx3.
     potential_energies: jax.Array = None    # particle potential energies. 1D, k.  
 
     # fields
     potential: jax.Array = None             # particles potentials. 1D, k.
-    brownian_fields: jax.Array = None        # fields produced by Brownian fluctuations. 4D, axnxnx2.
-    bf_idx: int = None                         # index of the Brownian field for the current timestep 
-    external_fields: jax.Array = None        # top fields produced by external drive. 3D, bxnx2.
-    ef_idx: int = None                         # index of the external field for the current timestep
-    interaction_field: jax.Array = None        # interaction field experienced by each particle. 2D, kx2.
+    brownian_fields: jax.Array = None       # fields produced by Brownian fluctuations. 4D, axnxnx2.
+    bf_idx: int = None                      # index of the Brownian field for the current timestep 
+    external_fields: jax.Array = None       # top fields produced by external drive. 3D, bxnx2.
+    ef_idx: int = None                      # index of the external field for the current timestep
+    interaction_field: jax.Array = None     # interaction field experienced by each particle. 2D, kx2.
     brownian_field: jax.Array = None        # field produced by Brownian fluctations. 2D, kx2. 
     external_field: jax.Array = None        # field produced by external drive. 3D, nxnx2. 
-    energy_field: jax.Array = None            # energy field produced by excitations and collisions. 2D, kx2. 
+    energy_field: jax.Array = None          # energy field produced by excitations and collisions. 2D, kx2. 
     transfer_field: jax.Array = None        # field transferred to particles by other influences. 2D, kx2.
     net_field: jax.Array = None             # net non-transferred field experienced by each particle. 2D, kx2. 
 
     # bound states
-    bound_states: jax.Array = None             # bound state index of each particle. 1D, k.
+    bound_states: jax.Array = None          # bound state index of each particle. 1D, k.
     masses: jax.Array = None                # mass of each bound state. 1D, k, 0-padded.
-    coms: jax.Array = None                    # center of mass of each bound state. 2D, kx2, 0-padded.
-    MOIs: jax.Array = None                    # moment of inertia of each bound state. 1D, k, 0-padded.
+    coms: jax.Array = None                  # center of mass of each bound state. 2D, kx2, 0-padded.
+    MOIs: jax.Array = None                  # moment of inertia of each bound state. 1D, k, 0-padded.
 
 
 @register_pytree_node_class
 @dataclass
 class ParticleSystem:
     # system
-    n: int                                     # number of lattice points along one dimension
-    k: int                                     # number of particles
+    n: int                                  # number of lattice points along one dimension
+    k: int                                  # number of particles
     t: int                                  # number of particle types
     N: jax.Array                            # number particles of each type, should sum to k. 1D, t.
-    T_M: jax.Array                            # particle type masses. 1D, t.
-    T_Q: jax.Array                            # particle type charges. 1D, t.
+    T_M: jax.Array                          # particle type masses. 1D, t.
+    T_Q: jax.Array                          # particle type charges. 1D, t.
 
     # viscous heat bath
     beta: float                             # inverse temperature, 1/T
@@ -127,39 +127,39 @@ class ParticleSystem:
 
     # kinetics
     time_unit: float                        # unit converting between velocity and distance in a timestep
-    speed_limit: int                         # upper bound on the distance a particle can move in one timestep
+    speed_limit: int                        # upper bound on the distance a particle can move in one timestep
     boundstate_speed_limit: int             # upper bound on the distance a molecule can move in one timestep
 
     # energy
-    mu: float                                # discernability threshold for energy
+    mu: float                               # discernability threshold for energy
 
     # potential energy 
-    rho: int                                 # range of the potential
-    point_func: callable                     # point function of the potential
-    energy_lower_bound: float                # lower bound for the potential energy of a particle
-    factor_limit: int                        # upper bound for the number of particles within range of a point
+    rho: int                                # range of the potential
+    point_func: callable                    # point function of the potential
+    energy_lower_bound: float               # lower bound for the potential energy of a particle
+    factor_limit: int                       # upper bound for the number of particles within range of a point
 
     # bonding 
-    bond_energy: float                        # maximum energy defining a bond
+    bond_energy: float                      # maximum energy defining a bond
 
     # external drive
     alpha: float                            # scale factor in Wien approximation to Planck's law
 
     # radiation emission
-    epsilon: float                             # threshold constant of radiation emission
-    delta: int                                # range of radiation emission
+    epsilon: float                          # threshold constant of radiation emission
+    delta: int                              # range of radiation emission
 
     # bookkeeping
-    pad_value: int                             # scalar used for padding most arrays
-    charge_pad_value: int                     # scalar used for padding charge arrays
-    particle_limit: int                        # upper bound on the size of an independent set of particles
-    boundstate_limit: int                     # upper bound on the size of an independent set of molecules
+    pad_value: int                          # scalar used for padding most arrays
+    charge_pad_value: int                   # scalar used for padding charge arrays
+    particle_limit: int                     # upper bound on the size of an independent set of particles
+    boundstate_limit: int                   # upper bound on the size of an independent set of molecules
     boundstate_nbhr_limit: int              # upper bound on the number of 'neighbors' of a molecule
 
     # sampling 
-    key: jax.Array                             # pseudo-random number generator
+    key: jax.Array                          # pseudo-random number generator
     kappa: float                            # scale factor used to pseudo-normalize densities
-    proposal_samples: int                     # number of samples to generate a valid proposal in samplers
+    proposal_samples: int                   # number of samples to generate a valid proposal in samplers
     field_preloads: int                     # number of Brownian and external fields to preload
 
     ### --- data fields with defaults ---
@@ -168,11 +168,11 @@ class ParticleSystem:
     lattice: jax.Array = field(default=None)    # lattice indices/positions, to be initialized. 3D, nxnx2.
 
     # particles
-    pauli_exclusion: bool = True             # Pauli exclusion indicator
+    pauli_exclusion: bool = True            # Pauli exclusion indicator
     I: jax.Array = field(default=None)      # particle indices, to be initialized. 1D, k.
-    T: jax.Array = field(default=None)        # particle types, to be initialized. 1D, k.
-    M: jax.Array = field(default=None)        # particle masses, to be initialized. 1D, k.
-    Q: jax.Array = field(default=None)        # particle charges, to be initialized. 1D, k.
+    T: jax.Array = field(default=None)      # particle types, to be initialized. 1D, k.
+    M: jax.Array = field(default=None)      # particle masses, to be initialized. 1D, k.
+    Q: jax.Array = field(default=None)      # particle charges, to be initialized. 1D, k.
 
     def __post_init__(self):
         if self.T is None:
