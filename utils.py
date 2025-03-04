@@ -10,7 +10,6 @@ def zero_prefix(A, index):
     mask = jnp.arange(A.shape[0]) >= index
     return A * mask
 
-
 def fill_suffix(A, index, val):
     mask = jnp.arange(A.shape[0]) >= index
     return jnp.where(mask, val, A)

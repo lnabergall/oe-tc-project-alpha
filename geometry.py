@@ -117,7 +117,7 @@ def centered_square(L, r, delta):
 
 def square_indices_nowrap(r, delta, n):
     x, y = r
-    diameter = 2 * delta
+    diameter = (2 * delta) + 1
     col_start = jnp.clip(x - delta, 0)
     col_indices = jnp.arange(diameter) + col_start
     row_start = jnp.clip(y - delta, 0)
@@ -203,8 +203,8 @@ def generate_property_lattice(L, C, L_pad_value, C_pad_value):
     return jnp.where(L != L_pad_value, C[L], C_pad_value)
 
 
-def partition_size(n, min_sep):
-    return ceil_div(n, min_sep) ** 2
+def partition_size(min_sep):
+    return 2 * (2 * (min_sep // 2) + 1) ** 2
 
 
 def independent_partition(R, L, part_size, min_sep, pad_value):
@@ -244,6 +244,7 @@ def independent_partition(R, L, part_size, min_sep, pad_value):
         return cell.ravel()
 
     P = jax.vmap(scan_cell)(center_indices)
+    P = P.transpose()
     P = rearrange_padding(P, pad_value)[:, :part_size]
 
     return P

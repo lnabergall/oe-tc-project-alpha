@@ -17,3 +17,7 @@ def setup_logging():
 
 def jax_log_info(fmt: str, *args, **kwargs):
     jax.debug.callback(lambda *args, **kwargs: logger.info(fmt, *args, **kwargs), *args, **kwargs)
+
+
+def jax_log_debug(fmt: str, *args, **kwargs):
+    jax.debug.callback(lambda *args, **kwargs: logger.debug(fmt, *args, **kwargs), *args, **kwargs)

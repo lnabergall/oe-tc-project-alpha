@@ -15,7 +15,7 @@ from sample import *
 from physics import *
 from geometry import *
 from utils import *
-from log import jax_log_info
+from log import *
 
 
 class InternalData(NamedTuple):
@@ -68,8 +68,6 @@ class InternalData(NamedTuple):
     com_paths: jax.Array = None                     # center of mass proposal paths. 3D, kxrx2.
 
     # energetics
-    boundstate_energies: jax.Array = None           # energies. 1D, k.
-    boundstate_proposal_energies: jax.Array = None  # proposal energies. 1D, k.
     boundstate_deltaEs: jax.Array = None            # proposal energies - energies. 1D, k.
     boundstate_B_paths: jax.Array = None            # energy barriers encountered along the com paths. 1D, k. 
 
@@ -227,8 +225,7 @@ class ParticleSystem:
         k_zeros_bool = jnp.zeros((self.k,), dtype=bool)
         k2_zeros_float = jnp.zeros((self.k, 2), dtype=float)
         k2_zeros_int = jnp.zeros((self.k, 2), dtype=int)
-        P_particles = jnp.full(
-            (partition_size(self.n, 2*self.speed_limit), self.particle_limit), self.pad_value)
+        P_particles = jnp.full((partition_size(2 * self.speed_limit), self.particle_limit), self.pad_value)
         paths = jnp.full((self.k, self.speed_limit+1, 2), self.pad_value)
         P_boundstates = jnp.full((self.k, self.boundstate_limit), self.pad_value)
         com_paths = jnp.full((self.k, self.boundstate_speed_limit+1, 2), self.pad_value)
@@ -245,7 +242,6 @@ class ParticleSystem:
             proposed_orientations=k_zeros_int, boundstate_logdensities=k_zeros_float, 
             boundstate_p_accepts=k_zeros_float, boundstate_accepts=k_zeros_bool, 
             linear_velocity_bounds=k_zeros_float, angular_velocity_bounds=k_zeros_float, com_paths=com_paths, 
-            boundstate_energies=k_zeros_float,boundstate_proposal_energies=k_zeros_float, 
             boundstate_deltaEs=k_zeros_float, boundstate_B_paths=k_zeros_float, 
             transferred_excess_works=k_zeros_float, boundstate_excess_works=k_zeros_float, 
             total_forces=k2_zeros_float, total_torques=k_zeros_float, boundstate_works=k_zeros_float)
@@ -284,7 +280,7 @@ class ParticleSystem:
         P_particles = independent_partition(data.R, data.L, self.particle_limit, 
                                             2 * self.speed_limit, self.pad_value)
         internal_data = internal_data._replace(P_particles=P_particles)
-        jax_log_info("partition: {}", P_particles)
+        jax_log_debug("partition: {}", P_particles)
 
         # scan over partition
         particle_scan_fn = lambda carry, I: self.particle_gibbs_step(carry[0], I, carry[1])
@@ -307,9 +303,9 @@ class ParticleSystem:
             excitation_works=excitation_works, total_excitation_works=total_excitation_works)
         potential_energies = data.potential_energies
 
-        jax_log_info("logdensities: {}", logdensities)
-        jax_log_info("sample info: {}", (p_accepts, accepts))
-        jax_log_info("post-particle R: {}", data.R)
+        jax_log_debug("logdensities: {}", logdensities)
+        jax_log_debug("sample info: {}", (p_accepts, accepts))
+        jax_log_debug("post-particle R: {}", data.R)
 
         # reset energy and transfer fields
         data = self.reset_fields(data)
@@ -337,21 +333,22 @@ class ParticleSystem:
         (data, _), boundstate_step_info = jax.lax.scan(
             boundstate_scan_fn, (data, key_boundstate), (P_boundstates, boundstate_excess_works))
 
+        print("P_particles: {}".format(P_particles.shape))
+        print("P_boundstates: {}".format(P_boundstates.shape))
+        print("shapes:" + "".join("{} ".format(x.shape) for x in jax.tree.flatten(boundstate_step_info)[0]))
+
         # collect per-boundstate data
         compactify_fn = lambda V: compactify_partition(P_boundstates, V, self.k, self.pad_value)
         (linear_velocity_bounds, angular_velocity_bounds, proposed_coms, proposed_orientations, 
             logdensities, (p_accepts, accepts), works, total_forces, total_torques, 
-            (com_paths, energies, proposal_energies, deltaEs, B_paths)) = jax.tree.map(
-            compactify_fn, boundstate_step_info)
+            (com_paths, deltaEs, B_paths)) = jax.tree.map(compactify_fn, boundstate_step_info)
+
         internal_data = internal_data._replace(
             linear_velocity_bounds=linear_velocity_bounds, angular_velocity_bounds=angular_velocity_bounds,
             proposed_coms=proposed_coms, proposed_orientations=proposed_orientations, 
             boundstate_logdensities=logdensities, boundstate_p_accepts=p_accepts, boundstate_accepts=accepts,
-            com_paths=com_paths, boundstate_works=works, boundstate_energies=energies, 
-            boundstate_proposal_energies=proposal_energies, total_forces=total_forces, 
+            com_paths=com_paths, boundstate_works=works, total_forces=total_forces, 
             total_torques=total_torques, boundstate_deltaEs=deltaEs, boundstate_B_paths=B_paths)
-
-        jax_log_info("post-molecule R: {}", data.R)
 
         # generate excitation emissions
         energy_field = self.generate_excitations(data, excess_works, potential_energies)
@@ -398,8 +395,7 @@ class ParticleSystem:
         # compute particle potential energies
         potential = potential_all(self.I, data.R, data.L, data.LQ, self.rho, self.point_func, self.pad_value)
         potential_energies = potential_energy_all(self.Q, potential)
-        jax_log_info("potential, potential_energies: {} \n {} \n\n", potential, potential_energies)
-
+        
         # get bound states and transfer excess work
         data, LQ, bound_states, masses, coms, MOIs, _, _ = self.determine_bound_states(data, I)
         data = data._replace(LQ=LQ, bound_states=bound_states, masses=masses, coms=coms, MOIs=MOIs,
@@ -442,7 +438,7 @@ class ParticleSystem:
         key, keys_sample = keys[0], keys[1:]
         sample_fn = jax.vmap(sample, in_axes=(0, 0, 0, 0, None))
         accepted_coms, sample_info = sample_fn(
-            keys_sample, logdensities, data.coms, proposed_coms, self.kappa)
+            keys_sample, logdensities, data.coms[I], proposed_coms, self.kappa)
         accepted_indicators = sample_info[1]
         accepted_orientations = jnp.where(accepted_indicators, proposed_orientations, 0)
         accept_mask = particle_mask * accepted_indicators[data.bound_states]
@@ -592,13 +588,14 @@ class ParticleSystem:
         """Generate new transfer forces, which are added to the transfer field."""
         I, I_mask, positions, accepted_positions = state
         I_mask_expand = jnp.broadcast_to(jnp.expand_dims(I_mask, axis=-1), I_mask.shape + (2,))
+        I_alt = jnp.where(I == self.pad_value, 2*self.k, I)
         zeros = jnp.zeros(self.k, dtype=float)
-        excess_works = zeros.at[jnp.where(I == self.pad_value, 2*self.k, I)].set(excess_works, mode="drop")
+        excess_works = zeros.at[I_alt].set(excess_works, mode="drop")
 
         end_field_fn = jax.vmap(calculate_end_field, in_axes=(None, None, None, None, 0, 0, 0, 0, None))
         end_field = end_field_fn(data.brownian_field, data.external_field, data.energy_field, 
             data.transfer_field, I, positions, accepted_positions, self.M[I], self.gamma)
-        net_field = jnp.where(I_mask_expand, end_field, data.net_field)
+        net_field = data.net_field.at[I_alt].set(end_field, mode="drop")
         new_transfer_field = jnp.where(I_mask_expand, 0.0, data.transfer_field)
 
         transfer_field = generate_full_transferred_field(
@@ -663,15 +660,12 @@ class ParticleSystem:
         drive_work, total_drive_work = calculate_work(path, data.external_field, mass)
         excitation_work, total_excitation_work = calculate_excitation_work(
             i, position, proposed_position, data.energy_field)
-        jax_log_info("brownian, transfer, drive, excitation: {} {} {} {}", 
-                        brownian_work, transfer_work, drive_work, excitation_work)
         work = brownian_work + transfer_work + drive_work + excitation_work
         total_work = calculate_total_work(
             total_brownian_work + total_transfer_work + total_drive_work + total_excitation_work, 
             data.brownian_field, data.external_field, data.transfer_field, 
             i, mass, position, proposed_position, velocity_bound)
 
-        jax_log_info("energy, work, deltaE, B_path: {} {} {} {}", energy, work, deltaE, B_path)
         logdensity = self.beta * (work - deltaE - B_path)
         # return both, for excess work and work applied even if proposal rejected
         return (logdensity, work, total_work), (path, energy, proposal_energy, deltaE, B_path,
@@ -717,8 +711,7 @@ class ParticleSystem:
         works = jnp.max(jnp.stack((works, work_budgets), axis=-1), axis=-1)
 
         logdensities = self.beta * (works - deltaEs - B_paths)
-        return ((logdensities, works, total_forces, total_torques), 
-                (com_paths, energies, proposal_energies, deltaEs, B_paths))
+        return (logdensities, works, total_forces, total_torques), (com_paths, deltaEs, B_paths)
 
     def particle_proposal_sampler(self, data, state, key, range_, num_samples=1):
         """
