@@ -457,11 +457,11 @@ def planck(key, beta, alpha, delta, theta, M, num_samples):
     return samples
 
 
-@partial(jax.jit, static_argnums=[1, 2, 3])
+#@partial(jax.jit, static_argnums=[1, 2, 3])
 def wien_approximation(key, beta, alpha, num_samples):
     keys = jax.random.split(key, num=num_samples)
 
-    @jax.jit
+    #@jax.jit
     def sample_fn(key):
         return jnp.exp(jax.random.loggamma(key, 4) - jnp.log(alpha) - jnp.log(beta))
 
@@ -504,13 +504,13 @@ def generate_drive_field(n, R, top_field, mask_func):
     return jnp.stack((jnp.zeros((n, n)), particle_mask * field), axis=-1)
 
 
-@partial(jax.jit, static_argnums=[1, 2, 3])
+#@partial(jax.jit, static_argnums=[1, 2, 3])
 def brownian_noise(key, beta, gamma, num_samples):
     keys = jax.random.split(key, num=num_samples)
 
-    @jax.jit
+    #@jax.jit
     def sample_fn(key):
-        return jnp.sqrt(2*gamma / beta) * jax.jax.random.normal(key)
+        return jnp.sqrt(2*gamma / beta) * jax.random.normal(key)
 
     samples = jax.vmap(sample_fn)(keys)
     return samples

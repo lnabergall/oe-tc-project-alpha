@@ -1,24 +1,30 @@
 import warnings
 import argparse
+from contextlib import nullcontext
 
 import jax
 import jax.numpy as jnp
 
 from system import ParticleSystem as System
-from log import setup_logging
+#from system_test import run, ParticleSystem as System
+from log import setup_logging, jax_log_info
 
 
 warnings.filterwarnings('error')  # turn warnings into errors
 
 jnp.set_printoptions(precision=3, suppress=True)
 
+jax.config.update("jax_traceback_in_locations_limit", -1)
+
 
 def get_config():
     parser = argparse.ArgumentParser(description="Run a driven particle model.")
     parser.add_argument("--config")
+    parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--cpu", action="store_true")
     args = parser.parse_args()
     config = CONFIGS[args.config.lower()]
-    return config
+    return config, args.profile, args.cpu
 
 
 CONFIGS = {
@@ -53,7 +59,7 @@ CONFIGS = {
 
         "pad_value": -1,
         "charge_pad_value": -2,
-        "particle_limit": 10,
+        "particle_limit": 4,
         "boundstate_limit": 10,
         "boundstate_nbhr_limit": 10,
 
@@ -62,7 +68,7 @@ CONFIGS = {
         "proposal_samples": 5,
         "field_preloads": 2,
     },
-    
+
     "toy_medium": {
         "n": 200,
         "k": 400,
@@ -106,8 +112,27 @@ CONFIGS = {
 }
 
 
+# if __name__ == '__main__':
+#     config, profiling = get_config()
+#     setup_logging()
+#     particle_system = System(**config)
+#     with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True) if profiling else nullcontext():
+#     	data, internal_data, key = particle_system.run(2)
+
 if __name__ == '__main__':
-    config = get_config()
+    config, profiling, use_cpu = get_config()
+    if use_cpu:
+        device = jax.devices("cpu")[0]
+        jax.config.update("jax_default_device", device)
+    else:
+        device = jax.devices()[0]
+
     setup_logging()
+    jax_log_info("Using device: " + device.__repr__())
+
     particle_system = System(**config)
-    data, internal_data, key = particle_system.run(2)
+    #jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
+    #particle_system, data, internal_data, key = run(particle_system, 2)
+    data, internal_data, key = jax.jit(particle_system.run)(4)
+    jax.block_until_ready((particle_system, data, internal_data, key))
+    #jax.profiler.stop_trace()
