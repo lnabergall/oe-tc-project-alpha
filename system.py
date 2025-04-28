@@ -155,7 +155,6 @@ class ParticleSystem:
     boundstate_nbhr_limit: int              # upper bound on the number of 'neighbors' of a molecule
 
     # sampling 
-    key: jax.Array                          # pseudo-random number generator
     kappa: float                            # scale factor used to pseudo-normalize densities
     proposal_samples: int                   # number of samples to generate a valid proposal in samplers
     field_preloads: int                     # number of Brownian and external fields to preload
@@ -181,15 +180,15 @@ class ParticleSystem:
         self.lattice = lattice_positions(self.n)
 
     def tree_flatten(self):
-        fields = asdict(self)
-        static_fields = {attr: val for attr, val in fields.items() if not isinstance(val, jax.Array)}
-        other_fields = tuple(val for val in fields.values() if isinstance(val, jax.Array))
-        return (other_fields, static_fields)
+        static_fields = asdict(self)
+        return ((), static_fields)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, **aux_data)
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("initialize")
     def initialize(self, key):
         key, key_positions, key_fields = jax.random.split(key, 3)
 
@@ -248,20 +247,34 @@ class ParticleSystem:
 
         return data, internal_data
 
-    def run(self, steps):
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("run")
+    @partial(jax.jit, static_argnums=2)
+    def run(self, key, steps):
         # initialize data, e.g. positions
-        key, key_init = jax.random.split(self.key)
+        key, key_init = jax.random.split(key)
+        jax_log_info("Initializing...")
         data, internal_data = self.initialize(key_init)
-        jax_log_info("initial R: {}", data.R)
+        jax_log_debug("initial R: {}", data.R)
 
         # start loop
-        step_fn = lambda i, args: self.step(*args)
+        jax_log_info("Running the system...")
+        step_fn = lambda i, args: self.step(i, *args)
+
+        key, subkey = jax.random.split(key)
+        field_data = self.generate_fields(subkey)
+
         data, internal_data, key = jax.lax.fori_loop(0, steps, step_fn, (data, internal_data, key))
-        jax_log_info("final R: {}", data.R)
+        jax_log_debug("final R: {}", data.R)
+        jax_log_info("System run complete.")
 
         return data, internal_data, key
 
-    def step(self, data, internal_data, key):
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("step")
+    def step(self, step, data, internal_data, key):
+        jax_log_info("step {}...", step)
+
         # generate new fields if needed
         key, key_fields, key_particle, key_boundstate = jax.random.split(key, 4)
         null_fn = lambda _: (data.brownian_fields, data.bf_idx, data.external_fields, data.ef_idx)
@@ -280,7 +293,6 @@ class ParticleSystem:
         P_particles = independent_partition(data.R, data.L, self.particle_limit, 
                                             2 * self.speed_limit, self.pad_value)
         internal_data = internal_data._replace(P_particles=P_particles)
-        jax_log_debug("partition: {}", P_particles)
 
         # scan over partition
         particle_scan_fn = lambda carry, I: self.particle_gibbs_step(carry[0], I, carry[1])
@@ -302,10 +314,6 @@ class ParticleSystem:
             drive_works=drive_works, total_drive_works=total_drive_works, 
             excitation_works=excitation_works, total_excitation_works=total_excitation_works)
         potential_energies = data.potential_energies
-
-        jax_log_debug("logdensities: {}", logdensities)
-        jax_log_debug("sample info: {}", (p_accepts, accepts))
-        jax_log_debug("post-particle R: {}", data.R)
 
         # reset energy and transfer fields
         data = self.reset_fields(data)
@@ -333,10 +341,6 @@ class ParticleSystem:
         (data, _), boundstate_step_info = jax.lax.scan(
             boundstate_scan_fn, (data, key_boundstate), (P_boundstates, boundstate_excess_works))
 
-        print("P_particles: {}".format(P_particles.shape))
-        print("P_boundstates: {}".format(P_boundstates.shape))
-        print("shapes:" + "".join("{} ".format(x.shape) for x in jax.tree.flatten(boundstate_step_info)[0]))
-
         # collect per-boundstate data
         compactify_fn = lambda V: compactify_partition(P_boundstates, V, self.k, self.pad_value)
         (linear_velocity_bounds, angular_velocity_bounds, proposed_coms, proposed_orientations, 
@@ -361,6 +365,8 @@ class ParticleSystem:
 
         return data, internal_data, key
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("particle_gibbs_step")
     def particle_gibbs_step(self, data, I, key):
         I_mask = jnp.isin(self.I, I)
         state = (I, data.R[I])
@@ -408,6 +414,8 @@ class ParticleSystem:
         return (data, key), (velocity_bounds, proposed_positions, logdensities, 
                 sample_info, works, excess_works, total_works, extra_data)
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("boundstate_gibbs_step")
     def boundstate_gibbs_step(self, data, I, key, excess_works):
         I_particles = get_particles(I, data.bound_states, self.pad_value)
         particle_mask = I_particles != self.pad_value
@@ -556,6 +564,8 @@ class ParticleSystem:
 
         return R_proposed
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("determine_bound_states")
     def determine_bound_states(self, data, I):
         """Determines all bound states."""
         L = add_to_lattice(data.L_test, I, data.R, self.pad_value)
@@ -565,6 +575,8 @@ class ParticleSystem:
 
         return data, *bound_states_data
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("determine_all_bound_states")
     def determine_all_bound_states(self, data):
         """Determines all bound states."""
         R = data.R
@@ -584,6 +596,8 @@ class ParticleSystem:
 
         return LQ, bound_states, masses, coms, MOIs, all_energy_factors, all_factor_indices
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("generate_transfer_field")
     def generate_transfer_field(self, data, state, excess_works, potential_energies):
         """Generate new transfer forces, which are added to the transfer field."""
         I, I_mask, positions, accepted_positions = state
@@ -609,6 +623,8 @@ class ParticleSystem:
 
         return transfer_field, net_field
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("generate_excitations")
     def generate_excitations(self, data, excess_works, potential_energies):
         """
         Generate new excitations, which are added to the energy field. 
@@ -631,6 +647,8 @@ class ParticleSystem:
         
         return energy_field
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("particle_logdensity_function")
     def particle_logdensity_function(self, data, state, proposed_position, velocity_bound):
         i, position = state
         mass, charge = self.M[i], self.Q[i]
@@ -672,6 +690,8 @@ class ParticleSystem:
                 transfer_work, total_transfer_work, brownian_work, total_brownian_work,
                 drive_work, total_drive_work, excitation_work, total_excitation_work)
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("bulk_boundstate_logdensity_function")
     def bulk_boundstate_logdensity_function(self, data, state, R_proposed, proposed_coms, 
                                             proposed_orientations, work_budgets):
         I, molecule_indices, _, particle_mask = state
@@ -713,6 +733,8 @@ class ParticleSystem:
         logdensities = self.beta * (works - deltaEs - B_paths)
         return (logdensities, works, total_forces, total_torques), (com_paths, deltaEs, B_paths)
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("particle_proposal_sampler")
     def particle_proposal_sampler(self, data, state, key, range_, num_samples=1):
         """
         Samples 'num_samples' particle position proposals uniformly at random within range 
@@ -726,6 +748,8 @@ class ParticleSystem:
         proposed_position = proposed_positions[jnp.argmin(invalids)]
         return proposed_position
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("particle_proposal_generator")
     def particle_proposal_generator(self, data, state, key, range_):
         """
         Samples a particle position proposal uniformly at random from the positions within range
@@ -755,6 +779,8 @@ class ParticleSystem:
 
         return proposed_position
 
+    # @jax.profiler.annotate_function
+    # @jax.named_scope("boundstate_proposal_sampler")
     def boundstate_proposal_sampler(self, data, state, key, range_, angular_range, num_samples=1):
         """
         Samples 'num_samples' bound state centers-of-mass and orientation proposals uniformly at random 

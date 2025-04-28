@@ -63,14 +63,51 @@ CONFIGS = {
         "boundstate_limit": 10,
         "boundstate_nbhr_limit": 10,
 
-        "key": jax.random.key(12),
         "kappa": 50,
         "proposal_samples": 5,
         "field_preloads": 2,
     },
+    "toy_small": {
+        "n": 40,
+        "k": 100,
+        "t": 2,
+        "N": jnp.array((80, 20)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
 
+        "beta": 1.0,
+        "gamma": 1.0,
+
+        "time_unit": 1.0,
+        "speed_limit": 3,
+        "boundstate_speed_limit": 2,
+
+        "mu": 0.1,
+
+        "rho": 2,
+        "point_func": lambda r: jnp.minimum(0.0, jnp.log2(1.5*r + 1) - 2.0),
+        "energy_lower_bound": -20.0,
+        "factor_limit": 12,
+
+        "bond_energy": -2.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": -1,
+        "charge_pad_value": -2,
+        "particle_limit": 20,
+        "boundstate_limit": 20,
+        "boundstate_nbhr_limit": 24,
+
+        "kappa": 50,
+        "proposal_samples": 10,
+        "field_preloads": 2,
+    },
     "toy_medium": {
-        "n": 200,
+        "n": 120,
         "k": 400,
         "t": 2,
         "N": jnp.array((320, 80)),
@@ -104,20 +141,94 @@ CONFIGS = {
         "boundstate_limit": 50,
         "boundstate_nbhr_limit": 48,
 
-        "key": jax.random.key(12),
         "kappa": 50,
         "proposal_samples": 10,
+        "field_preloads": 2,
+    },
+    "toy_large": {
+        "n": 250,
+        "k": 2000,
+        "t": 2,
+        "N": jnp.array((1600, 400)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 1.0,
+        "gamma": 1.0,
+
+        "time_unit": 1.0,
+        "speed_limit": 8,
+        "boundstate_speed_limit": 4,
+
+        "mu": 0.1,
+
+        "rho": 2,
+        "point_func": lambda r: jnp.minimum(0.0, jnp.log2(1.5*r + 1) - 2.0),
+        "energy_lower_bound": -20.0,
+        "factor_limit": 24,
+
+        "bond_energy": -2.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": -1,
+        "charge_pad_value": -2,
+        "particle_limit": 200,
+        "boundstate_limit": 200,
+        "boundstate_nbhr_limit": 196,
+
+        "kappa": 50,
+        "proposal_samples": 24,
+        "field_preloads": 2,
+    },
+    "toy_massive": {
+        "n": 750,
+        "k": 20000,
+        "t": 2,
+        "N": jnp.array((16000, 4000)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 1.0,
+        "gamma": 1.0,
+
+        "time_unit": 1.0,
+        "speed_limit": 8,
+        "boundstate_speed_limit": 4,
+
+        "mu": 0.1,
+
+        "rho": 2,
+        "point_func": lambda r: jnp.minimum(0.0, jnp.log2(1.5*r + 1) - 2.0),
+        "energy_lower_bound": -20.0,
+        "factor_limit": 24,
+
+        "bond_energy": -2.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": -1,
+        "charge_pad_value": -2,
+        "particle_limit": 1000,
+        "boundstate_limit": 1000,
+        "boundstate_nbhr_limit": 964,
+
+        "kappa": 50,
+        "proposal_samples": 48,
         "field_preloads": 2,
     }
 }
 
+toy_small2 = CONFIGS["toy_small"]
+toy_small2["n"] = 80
+CONFIGS["toy_small2"] = toy_small2
 
-# if __name__ == '__main__':
-#     config, profiling = get_config()
-#     setup_logging()
-#     particle_system = System(**config)
-#     with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True) if profiling else nullcontext():
-#     	data, internal_data, key = particle_system.run(2)
 
 if __name__ == '__main__':
     config, profiling, use_cpu = get_config()
@@ -130,9 +241,14 @@ if __name__ == '__main__':
     setup_logging()
     jax_log_info("Using device: " + device.__repr__())
 
+    key = jax.random.key(12)
     particle_system = System(**config)
-    #jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
-    #particle_system, data, internal_data, key = run(particle_system, 2)
-    data, internal_data, key = jax.jit(particle_system.run)(4)
+
+    if profiling:
+        jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)
+
+    data, internal_data, key = particle_system.run(key, 4)
     jax.block_until_ready((particle_system, data, internal_data, key))
-    #jax.profiler.stop_trace()
+
+    if profiling:
+        jax.profiler.stop_trace()

@@ -10,7 +10,7 @@ from utils import *
 key = jax.random.key(int(date.today().strftime("%Y%m%d")))
 
 
-@partial(jax.jit, static_argnums=[1, 2, 3])
+# @partial(jax.jit, static_argnums=[1, 2, 3])
 def sample_lattice_points(key, n, k, replace=False):
     """Returns particle positions uniformly randomly sampled without replacement."""
     samples_1D = jax.random.choice(key, n**2, (k,), replace=replace)
@@ -64,7 +64,7 @@ def uniform_orientation_proposal_generator(key, angular_range, num_samples):
     return proposals
 
 
-@partial(jax.jit, static_argnums=[3, 5])
+# @partial(jax.jit, static_argnums=[3, 5])
 def uniform_proposal_generator(key, position, range_, num_samples, angular_range=None, 
                                bound_state=False):
     proposed_position = uniform_position_proposal_generator(key, position, range_, num_samples)

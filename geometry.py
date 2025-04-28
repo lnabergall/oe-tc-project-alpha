@@ -39,7 +39,7 @@ def using_periodicity(x_diff, n):
     return (n - x_diff) <= x_diff
 
 
-@partial(jax.jit, static_argnums=[2, 3])
+@partial(jax.jit, static_argnums=[2, 3, 4])
 def canonical_shortest_path(r_start, r_end, max_length, n, pad_value):
     """
     Returns a canonical shortest path between r_start and r_end, where we take 

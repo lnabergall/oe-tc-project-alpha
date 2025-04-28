@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 
 from log import jax_log_info
-from utils import bfs
 
 
 def outer_one(A):
@@ -34,21 +33,19 @@ def inner_two(z):
 
 
 if __name__ == '__main__':
+    profile = False
     print("Using device: ", jax.devices()[0], "\n")
 
-    #jax.profiler.start_trace("/tmp/jax-trace-test", create_perfetto_link=True)
-
-    # edges = jnp.array([[-1, -1, -1, -1], [1, -1, -1, -1]], dtype=int)
-    # i = 0
-    # visited = bfs(edges, i, -1)
-    # jax.debug.print("visited: {}", visited)
+    if profile:
+        jax.profiler.start_trace("/tmp/jax-trace-test", create_perfetto_link=True)
 
     jax_log_info("Starting test...")
-    #jit_func = jax.jit(func)
+    jit_func = jax.jit(func)
     jax_log_info("Running...")
-    A = func()
+    A = jit_func()
     A.block_until_ready()
     jax_log_info("Completed.")
 
-    #jax.profiler.stop_trace()
+    if profile:
+        jax.profiler.stop_trace()
 
