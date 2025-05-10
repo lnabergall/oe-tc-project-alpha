@@ -154,13 +154,70 @@ def calculate_kinetic_factors(p, p_nv, p_ne, m):
     return Q_delta_momentum, E_emit, (p_ne_squared / double_m)
 
 
+def calculate_heat_released(p_ne, e, Q_delta_mom, U, U_e, mu):
+    Q_delta_pot = U_e - U
+    Q_delta = Q_delta_mom + (mu * jnp.dot(p_ne, e)) - Q_delta_pot
+    return Q_delta
+
+
 def determine_emissions(U, is_bound, E_emit, K_ne, epsilon):
     energy_to_emit = E_emit > 0
     high_energy = K_ne >= (-epsilon * U)
     return jnp.logical_and(jnp.logical_and(energy_to_emit, is_bound), high_energy)
 
 
-def calculate_heat_released(p_ne, e, Q_delta_mom, U, U_e, mu):
-    Q_delta_pot = U_e - U
-    Q_delta = Q_delta_mom + (mu * jnp.dot(p_ne, e)) - Q_delta_pot
-    return Q_delta
+def calculate_emissions(r, L, M, Q, P, E_emit, delta, mu, pad_value):
+    """
+    Calculates the field update vector for each particle in an energy emission event at 'r'.
+    Uses a simple dispersal method where each particle within 'delta' distance receives
+    an energy amount proportional to its distance from the source particle at 'r'.
+    No screening from other particles.
+
+    r
+        Position of the source particle, matching L. 2D, 2.
+    L
+        Array of lattice sites, with each filled site indicated by the index of the particle.
+        Otherwise filled with 'pad_value'. 2D, nxn.
+    M
+        Array of particle masses. 1D, k.
+    Q 
+        Array of particle charges. 1D, k.
+    P
+        Array of particle momenta. 2D, kx2. 
+    E_emit
+        Energy emitted by the particle at 'r'. Assumed to be positive.
+    delta
+        Range of energy emission.
+    mu
+        Scalar.
+    """
+    n = L.shape[0]
+    Lr_square, Lr_square_positions = centered_square(L, r, delta)
+    Mr_square, Qr_square, Pr_square = M[Lr_square], Q[Lr_square], P[Lr_square]
+    distances = lattice_distances_2D(r, Lr_square_positions, n)
+
+    excited_mask = (distances <= delta) & (distances != 0)  # exclude r itself from excitation
+    excited_particle_mask = (Lr_square != pad_value) & excited_mask
+
+    inv_distances = 1 / distances
+    inv_distances = jnp.where(inv_distances == jnp.inf, 0.0, inv_distances)
+    normalizer = 1 / jnp.sum(inv_distances * excited_mask)
+
+    directions = Lr_square_positions - jnp.expand_dims(jnp.expand_dims(r, axis=0), axis=0)
+    Pr_norm_square = jnp.linalg.vector_norm(Pr_square, -1)
+
+    field = 2 * Mr_square * normalizer * E_emit
+    field = (Pr_norm_square ** 2) + (field * inv_distances)
+    field = jnp.sqrt(field) - Pr_norm_square
+    field = directions * inv_distances * field / (mu * Qr_square)
+    field = excited_particle_mask * field
+
+    return field, Lr_square_positions
+
+
+def merge_excitations(field_arrays, position_arrays, n):
+    field = jnp.zeros((n, n, 2), dtype=float)
+    positions = position_arrays.reshape(-1, 2)
+    excitations = field_arrays.reshape(-1, 2)
+    field = field.at[positions[:, 0], positions[:, 1], :].add(excitations)
+    return field

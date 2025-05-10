@@ -40,6 +40,8 @@ class SystemData(NamedTuple):
     R: jax.Array                            # particle positions. 2D, kx2. 
     L: jax.Array = None                     # labeled occupation lattice. 2D, nxn.
     LQ: jax.Array = None                    # charge-labeled occupation lattice. 2D, nxn.
+    L_test: jax.Array = None                # labeled occupation lattice for test particles. 2D, nxn.
+    LQ_test: jax.Array = None               # charge-labeled occupation lattice for test particles. 2D, nxn.
     P: jax.Array = None                     # particle momenta. 2D, kx2.
     U: jax.Array = None                     # particle potential energies. 1D, k.
 
@@ -93,6 +95,7 @@ class ParticleSystem:
     # bookkeeping
     pad_value: int                          # scalar used for padding most arrays
     charge_pad_value: int                   # scalar used for padding charge arrays
+    emission_limit: int                     # limit on the number of emission events to parallel process
     boundstate_limit: int                   # upper bound on the size of an independent set of molecules
     boundstate_nbhr_limit: int              # upper bound on the number of 'neighbors' of a molecule
 
@@ -190,15 +193,15 @@ class ParticleSystem:
         pass
 
         # reset and generate emission field, make optional
-        # need previous positions
         emission_field = self.generate_emissions(data, internal_data, emission_indicator, R_previous)
+        data = data._replace(emission_field=emission_field)
 
         return data, internal_data, key 
 
     def particle_gibbs_step(self, data, internal_data, I, key):
         R_I, Q_I = data.R[I], self.Q[I]
         
-        R_Inbhd, U_Inbhd, U_I, is_bound = self.gibbs_update_data(data, I, R_I, Q_I)
+        L_test, LQ_test, R_Inbhd, U_Inbhd, U_I, is_bound = self.gibbs_update_data(data, I, R_I, Q_I)
 
         # determine emitters
         is_emitter = jax.vmap(determine_emissions, in_axes=(0, 0, 0, 0, None))(
@@ -228,11 +231,12 @@ class ParticleSystem:
         emission_indicator = jnp.logical_and(is_emitter, no_move) 
         P_new = jnp.where(emission_indicator, internal_data.P_v[I], P_ne)
 
-        # update states
+        # update states and data
         I_indexer = jnp.where(I == self.pad_value, 2*self.k, I)
         R = data.R.at[I_indexer].set(next_positions, mode="drop")
         P = data.P.at[I_indexer].set(P_new, mode="drop")
-        data = data._replace(R=R, P=P)
+        L = add_to_lattice(L_test, I, R, self.pad_value)
+        data = data._replace(R=R, P=P, L=L)
 
         return (data, key), (logdensities, probabilities, emission_indicator, U_Inbhd, is_bound, no_move)
 
@@ -276,7 +280,34 @@ class ParticleSystem:
         # bound state containment
         is_bound = bound(U_I)
 
-        return R_Inbhd, U_Inbhd, U_I, is_bound
+        return L_test, LQ_test, R_Inbhd, U_Inbhd, U_I, is_bound
 
     def generate_emissions(self, data, internal_data, emission_indicator, R_previous):
-        pass
+        I = jnp.extract(emission_indicator, self.I, size=self.emission_limit, fill_value=2*self.k)
+        field = jnp.zeros((self.n, self.n, 2), dtype=float)
+
+        def emit_fn(carry):
+            I, field, emission_indicator = carry
+            R_I = R[I]
+            pad_mask = I == self.pad_value
+
+            excitations_fn = jax.vmap(calculate_emissions, 
+                in_axes=(0, None, None, None, None, 0, None, None, None))
+            field_arrays, position_arrays = excitations_fn(R_I, data.L, self.M, self.Q, 
+                data.P, internal_data.E_emit[I], self.delta, self.mu, self.pad_value)
+            field_arrays = field_arrays.at[pad_mask].set(0.0)
+
+            field = field.at[:, :, :].add(merge_excitations(field_arrays, position_arrays, self.n))
+            emission_indicator = emission_indicator.at[I].set(False, mode="drop")
+            I = jnp.extract(emission_indicator, self.I, 
+                            size=self.emission_limit, fill_value=2*self.k)
+            return I, field, emission_indicator
+
+        def check_fn(carry):
+            emission_indicator = carry[2]
+            return jnp.any(emission_indicator)
+
+        field = jax.lax.while_loop(check_fn, emit_fn, (I, field, emission_indicator))
+        emission_field = field[data.R[:, 0], data.R[:, 1]]
+
+        return emission_field

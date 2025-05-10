@@ -14,6 +14,25 @@ def cylindrical_coordinates(A, n):
     return A.at[..., 0].set(A[..., 0] % n)
 
 
+def periodic_norm(x_diff, n):
+    return jnp.min(jnp.stack((x_diff, n - x_diff)))
+
+
+def lattice_distance(r, s, n):
+    """Compute lattice distance between points r and s."""
+    diff = jnp.abs(r - s)
+    y_norm = diff[1]
+    x_diff = diff[0]
+    x_norm = periodic_norm(x_diff, n)
+    norm = x_norm + y_norm
+    return norm
+
+
+lattice_distances = jax.vmap(lattice_distance, (0, 0, None))
+lattice_distances_1D = jax.vmap(lattice_distance, (None, 0, None))
+lattice_distances_2D = jax.vmap(lattice_distances_1D, (None, 0, None))
+
+
 def get_shifts():
     return jnp.array(((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)), dtype=int)
 
@@ -26,10 +45,48 @@ def generate_neighorhood(x, n):
     return cylindrical_coordinates(x.reshape((1, 2)) + shifts(), n)
 
 
+def square_indices(r, delta, n):
+    x, y = r
+    diameter = (2 * delta) + 1
+    row_indices = (x + jnp.arange(diameter) - delta) % n
+    col_start = jnp.clip(y - delta, 0, n - diameter)
+    col_indices = jnp.arange(diameter) + col_start
+    return row_indices, col_indices
+
+
+def centered_square(L, r, delta):
+    """
+    Generate the subset of the lattice 'L' consisting of a square of radius 'delta' centered at 'r',
+    along with the positions in that subset. Adjusts for periodicity in the x-dimension and 
+    boundary limits in the y-dimension.
+    """
+    n = L.shape[0]
+    x_indices, y_indices = square_indices(r, delta, n)
+    square = L[x_indices[:, None], y_indices[None, :]]
+    positions = jnp.stack(jnp.meshgrid(x_indices, y_indices, indexing="ij"), axis=-1)
+    return square, positions
+
+
+def add_to_lattice(L, I, R, pad_value):
+    """Add particles in I to lattice L. Assumes no particles are co-located."""
+    R_I = R[I]
+    return L.at[R_I[:, 0], R_I[:, 1]].set(I, mode="drop")
+
+
 def remove_from_lattice(L, I, pad_value):
     """Remove particles in I from lattice L."""
     removal_mask = jnp.isin(L, jnp.where(I == pad_value, pad_value - 1, I))
     return jnp.where(removal_mask, pad_value, L)
+
+
+def generate_unlabeled_lattice(R, n):
+    """
+    Generate the unlabeled occupation lattice corresponding to R. The lattice is an nxn Array; 
+    occupation is indicated by 0 or 1, indicating whether a site is filled by a particle or not. 
+    """
+    L = jnp.zeros((n, n), dtype=int)
+    L = L.at[R[:, 0], R[:, 1]].set(1)
+    return L
 
 
 def generate_property_lattice(L, C, L_pad_value, C_pad_value):
