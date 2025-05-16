@@ -45,6 +45,15 @@ def generate_neighorhood(x, n):
     return cylindrical_coordinates(x.reshape((1, 2)) + shifts(), n)
 
 
+def generate_open_neighorhood(x, n):
+    """
+    Generate the neighborhood of a point 'x' in a lattice of size n, 
+    with periodic first dimension and excluding 'x' itself.
+    """
+    steps = jnp.array(((1, 0), (-1, 0), (0, 1), (0, -1)), dtype=int)
+    return cylindrical_coordinates(x.reshape((1, 2)) + steps, n)
+
+
 def square_indices(r, delta, n):
     x, y = r
     diameter = (2 * delta) + 1

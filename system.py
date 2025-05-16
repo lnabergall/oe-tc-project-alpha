@@ -95,7 +95,8 @@ class ParticleSystem:
     # bookkeeping
     pad_value: int                          # scalar used for padding most arrays
     charge_pad_value: int                   # scalar used for padding charge arrays
-    emission_limit: int                     # limit on the number of emission events to parallel process
+    emission_streams: int                   # number of emission events to parallel process
+    boundstate_streams: int                 # number of parallel processes during bound state discovery 
     boundstate_limit: int                   # upper bound on the size of an independent set of molecules
     boundstate_nbhr_limit: int              # upper bound on the number of 'neighbors' of a molecule
 
@@ -147,8 +148,6 @@ class ParticleSystem:
 
         key, key_drive, key_particle, key_boundstate = jax.random.split(key, 4)
 
-        R_previous = data.R     # for emission calculations
-
         # generate new drive fields if needed
         null_fn = lambda _: (data.external_fields, data.ef_idx)
         fields_consumed = data.ef_idx >= data.external_fields.shape[0]
@@ -181,6 +180,9 @@ class ParticleSystem:
                                                emission_indicator=emission_indicator)
 
         ### bound state phase
+        # calculate bound states
+        bound_states, masses, coms = self.determine_bound_states(data, no_move)
+
         # determine a partition
         pass
 
@@ -193,19 +195,20 @@ class ParticleSystem:
         pass
 
         # reset and generate emission field, make optional
-        emission_field = self.generate_emissions(data, internal_data, emission_indicator, R_previous)
+        emission_field = self.generate_emissions(data, internal_data, emission_indicator)
         data = data._replace(emission_field=emission_field)
 
         return data, internal_data, key 
 
     def particle_gibbs_step(self, data, internal_data, I, key):
         R_I, Q_I = data.R[I], self.Q[I]
-        
-        L_test, LQ_test, R_Inbhd, U_Inbhd, U_I, is_bound = self.gibbs_update_data(data, I, R_I, Q_I)
+        K_ne = internal_data.K_ne[I]
+
+        L_test, LQ_test, R_Inbhd, U_Inbhd, U_I, is_bound = self.gibbs_update_data(data, I, R_I, Q_I, K_ne)
 
         # determine emitters
         is_emitter = jax.vmap(determine_emissions, in_axes=(0, 0, 0, 0, None))(
-            U_I, is_bound, internal_data.E_emit[I], internal_data.K_ne[I], self.epsilon)
+            U_I, is_bound, internal_data.E_emit[I], K_ne, self.epsilon)
 
         # prepare candidate states
         shifts = get_shifts()
@@ -263,7 +266,7 @@ class ParticleSystem:
 
         return external_field, net_field, P_v, P_nv, P_ne, Q_delta_momentum, E_emit, K_ne
 
-    def gibbs_update_data(self, data, I, R_I, Q_I):
+    def gibbs_update_data(self, data, I, R_I, Q_I, K_ne):
         """Multi-particle data needed for a single Gibbs update step."""
         # labeled occupation lattices without particles in I
         L_test = remove_from_lattice(data.L, I, self.pad_value)
@@ -278,17 +281,18 @@ class ParticleSystem:
         U_I = U_Inbhd[:, 0]
 
         # bound state containment
-        is_bound = bound(U_I)
+        E_I = U_I + K_ne
+        is_bound = bound(E_I)
 
         return L_test, LQ_test, R_Inbhd, U_Inbhd, U_I, is_bound
 
-    def generate_emissions(self, data, internal_data, emission_indicator, R_previous):
-        I = jnp.extract(emission_indicator, self.I, size=self.emission_limit, fill_value=2*self.k)
+    def generate_emissions(self, data, internal_data, emission_indicator):
+        I = jnp.extract(emission_indicator, self.I, size=self.emission_streams, fill_value=2*self.k)
         field = jnp.zeros((self.n, self.n, 2), dtype=float)
 
-        def emit_fn(carry):
-            I, field, emission_indicator = carry
-            R_I = R[I]
+        def emit_fn(args):
+            I, field, emission_indicator = args
+            R_I = data.R[I]
             pad_mask = I == self.pad_value
 
             excitations_fn = jax.vmap(calculate_emissions, 
@@ -300,14 +304,39 @@ class ParticleSystem:
             field = field.at[:, :, :].add(merge_excitations(field_arrays, position_arrays, self.n))
             emission_indicator = emission_indicator.at[I].set(False, mode="drop")
             I = jnp.extract(emission_indicator, self.I, 
-                            size=self.emission_limit, fill_value=2*self.k)
+                            size=self.emission_streams, fill_value=2*self.k)
             return I, field, emission_indicator
 
-        def check_fn(carry):
-            emission_indicator = carry[2]
+        def cond_fn(args):
+            emission_indicator = args[2]
             return jnp.any(emission_indicator)
 
-        field = jax.lax.while_loop(check_fn, emit_fn, (I, field, emission_indicator))
+        field = jax.lax.while_loop(cond_fn, emit_fn, (I, field, emission_indicator))
         emission_field = field[data.R[:, 0], data.R[:, 1]]
 
         return emission_field
+
+    def determine_bound_states(self, data, no_move):
+        # bound states to recompute
+        bs_active = jnp.extract(~no_move, data.bound_states, size=self.k, fill_value=self.pad_value)
+        bs_active = jnp.unique(bs_active, size=self.k, fill_value=self.pad_value)
+
+        # particles in recomputed bound states
+        active_indicator = jnp.isin(data.bound_states, bs_active)
+        I = jnp.extract(active_indicator, self.I, size=self.k, fill_value=self.pad_value)
+
+        # all bonds
+        K = kinetic_energy(data.P, self.M)
+        bond_data_fn = jax.vmap(compute_bond_data, in_axes=(0, 0, None, None, None, None))
+        nbhds, factors, is_bound = bond_data_fn(self.I, K, data.R, data.L, self.Q, self.pad_value)
+        bonds = jax.vmap(compute_bonds, in_axes=(0, 0, None, None))(
+            factors, nbhds, is_bound, self.pad_value)
+
+        # bound states
+        visited = ~active_indicator
+        bound_states = jnp.where(active_indicator, self.pad_value, data.bound_states)
+        bound_states = compute_bound_states(I, bonds, bound_states, visited, 
+                                            self.boundstate_streams, self.pad_value)
+        coms, masses = centers_of_mass(R, self.M, bound_states)
+
+        return bound_states, masses, coms

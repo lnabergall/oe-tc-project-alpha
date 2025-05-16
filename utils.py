@@ -122,7 +122,7 @@ def bfs(edges, i, pad_value):
     pad_value
         Scalar used as a padding used to indicate elements of edges that should be treated as null.
     """
-    k = edges.shape[0]
+    k, d = edges.shape
 
     visited = jnp.zeros(k, dtype=bool)
     visited = visited.at[i].set(True)
@@ -141,15 +141,17 @@ def bfs(edges, i, pad_value):
 
         neighbors = edges[current]
 
-        def process_neighbor(state, neighbor):
-            visited, queue, tail = state
-            valid = (neighbor != pad_value) & (~visited[neighbor])
-            visited = jnp.where(valid, visited.at[neighbor].set(True), visited)
-            queue = jnp.where(valid, queue.at[tail].set(neighbor), queue)
-            tail = jnp.where(valid, tail + 1, tail)
-            return (visited, queue, tail), pad_value
+        # mark unvisited neighbors 
+        valid = (neighbors != pad_value) & (~visited[neighbors])
+        visited = jnp.where(valid, visited.at[neighbors].set(True), visited)
 
-        (visited, queue, tail), _ = jax.lax.scan(process_neighbor, (visited, queue, tail), neighbors)
+        # add them to queue and update tail
+        num_valid = jnp.sum(valid)
+        queue_range = jnp.arange(tail, tail+num_valid)
+        unvisited = jnp.extract(valid, neighbors, size=d, fill_value=2*k)
+        queue = queue.at[queue_range].set(unvisited, mode="drop")
+        tail += num_valid
+
         return visited, queue, head, tail
 
     visited, queue, head, tail = jax.lax.while_loop(cond_fn, body_fn, (visited, queue, head, tail))
