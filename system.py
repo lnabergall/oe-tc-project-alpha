@@ -56,7 +56,6 @@ class SystemData(NamedTuple):
     bound_states: jax.Array = None          # bound state index of each particle. 1D, k.
     masses: jax.Array = None                # mass of each bound state. 1D, k, 0-padded.
     coms: jax.Array = None                  # center of mass of each bound state. 2D, kx2, 0-padded.
-    MOIs: jax.Array = None                  # moment of inertia of each bound state. 1D, k, 0-padded.
 
 
 def assign_properties(t, k, N, T_M, T_Q):
@@ -146,7 +145,7 @@ class ParticleSystem:
     def step(self, step, data, internal_data, key):
         jax_log_info("step {}...", step)
 
-        key, key_drive, key_particle, key_boundstate = jax.random.split(key, 4)
+        key, key_drive, key_particle, key_partition, key_boundstate = jax.random.split(key, 5)
 
         # generate new drive fields if needed
         null_fn = lambda _: (data.external_fields, data.ef_idx)
@@ -182,11 +181,12 @@ class ParticleSystem:
         ### bound state phase
         # calculate bound states
         bound_states, masses, coms = self.determine_bound_states(data, no_move)
+        data = data._replace(bound_states=bound_states, masses=masses, coms=coms)
 
-        # determine a partition
-        pass
+        # determine a partition as a coloring
+        C_boundstates = four_group_partition(data.bound_states, data.L, key_partition, self.pad_value)
 
-        # scan over partition
+        # while_loop over coloring
         pass
 
         # collect per-boundstate data

@@ -134,3 +134,43 @@ def four_partition(R, L, pad_value):
     P = rearrange_padding(P, pad_value)[:, :k]
 
     return P
+
+
+def four_group_partition(bound_states, L, key, pad_value):
+    k, m = bound_states.shape[0], jnp.max(bound_states)
+    L_bs = jnp.where(L == pad_value, 2*k, bound_states[L])
+    coloring = jnp.full((k,), pad_value)
+    padding_mask = bound_states != pad_value
+
+    def any_true_per_id(L_mask):
+        flat_mask = L_mask.ravel().astype(int)
+        flat_ids = L_bs.ravel()
+        mask = jnp.zeros((k,), dtype=int)
+        return mask.at[flat_ids].max(flat_mask, mode="drop")
+
+    def cond_fn(args):
+        coloring = args[1]
+        return jnp.any(color == pad_value)
+
+    def color_fn(args):
+        step, coloring, key = args
+        key, subkey = jax.random.split(key)
+
+        # random 64-bit priorities for mixing
+        priorities = jax.random.randint(subkey, (k,), 1, 2**63, dtype=jnp.uint64)
+        priorities = jnp.where(coloring == pad_value, priorities, 0)
+        L_p = priorities.at[L_bs].get(mode="fill", fill_value=0)
+
+        # max priority in every 7x7 square
+        nbhd_max = jax.lax.reduce_window(L_p, 0, jax.lax.max, (7, 7), (1, 1), "SAME")
+        L_loses = (nbhd_max != L_p) & (L_bs != pad_value)
+        lose_indicator = any_true_per_id(L_loses)
+
+        # choose uncoloured that never lost
+        chosen = (lose_indicator == 0) & (coloring == pad_value) & padding_mask
+        coloring = coloring.at[chosen].set(step)
+
+        return step + 1, coloring, key
+
+    coloring, _ = jax.lax.while_loop(cond_fn, color_fn, (0, coloring, key))
+    return coloring
