@@ -22,3 +22,11 @@ def sample(key, probabilities, n):
     """Sample from 'n' distinguishable elements according to 'probabilities'."""
     i = jax.random.choice(key, n, p=probabilities)
     return i
+
+
+def gibbs_sample(key, probabilities):
+    k = probabilities.shape[0]
+    keys = jax.random.split(key, num=k+1)
+    key, keys_sample = keys[0], keys[1:]
+    next_indices = jax.vmap(sample)(keys_sample, probabilities, 5)
+    return next_indices, key

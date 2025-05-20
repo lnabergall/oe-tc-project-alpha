@@ -80,7 +80,7 @@ def compute_bond_data(i, K, R, L, Q, pad_value):
 
     r_nbhd = generate_open_neighorhood(r, n)
     nbhd = L[r_nbhd[:, 0], r_nbhd[:, 1]]
-    nbhd_safe = jnp.where(nbhd == pad_value, 2*k, nbhd)
+    nbhd_safe = replace(nbhd, pad_value, 2*k)
     nbhd_charges = Q.at[nbhd_safe].get(mode="fill", fill_value=0)
 
     energy_factors = q * nbhd_charges
@@ -153,15 +153,17 @@ def centers_of_mass(R, M, bound_states):
     Returns the center of mass and mass of each bound state 
     in a 0-padded 'k' length 2D Array and 1D Array, respectively.
     """
-    k = R.shape[0]
-    position_sums = jnp.zeros((k, 2), dtype=int)
-    mass_sums = jnp.zeros((k,), dtype=int)
-    position_sums = position_sums.at[bound_states].add(jnp.expand_dims(M, axis=-1) * R)
-    mass_sums = mass_sums.at[bound_states].add(M)
+    mass_sums = compute_group_sums(M, bound_states)
+    position_sums = compute_group_sums(jnp.expand_dims(M, axis=-1) * R, bound_states)
     # use a mask to handle padding
     mass_sums_expanded = jnp.expand_dims(mass_sums, axis=-1)
     centers = jnp.where(mass_sums_expanded > 0, position_sums / mass_sums_expanded, 0)
     return centers, mass_sums
+
+
+def move(R, coms_curr, coms_new):
+    """Move each particle using reference points. Should be a valid lattice translation."""
+    return R + (coms_new - coms_curr).astype(int)
 
 
 @partial(jax.jit, static_argnums=[1, 2, 3, 4, 5, 6])
@@ -246,12 +248,17 @@ def kinetic_energy(p, m):
     return lattice_norm_squared(p) / (2 * m)
 
 
-def calculate_kinetic_factors(p, p_nv, p_ne, m):
-    double_m = 2 * m
-    K = lattice_norm_squared(p) / double_m
+def calculate_partial_kinetic_factors(p_nv, p_ne, double_m):
     K_ne = lattice_norm_squared(p_ne) / double_m
     K_nv = lattice_norm_squared(p_nv) / double_m
     Q_delta_momentum = K_nv - K_ne
+    return Q_delta_momentum, K_nv, K_ne
+
+
+def calculate_kinetic_factors(p, p_nv, p_ne, m):
+    double_m = 2 * m
+    K = lattice_norm_squared(p) / double_m
+    Q_delta_momentum, K_nv, K_ne = calculate_partial_kinetic_factors(p_nv, p_ne, double_m)
     E_emit = K_nv - K
     return Q_delta_momentum, E_emit, K_ne
 
@@ -261,6 +268,19 @@ def calculate_heat_released(p_ne, e, Q_delta_mom, U, U_e, mu):
     Q_delta_pot = U_e - U
     Q_delta = Q_delta_mom + (mu * jnp.dot(p_ne, e)) - Q_delta_pot
     return Q_delta
+
+
+@partial(jax.jit, static_argnums=[4, 5])
+def calculate_probabilities(P_ne, Q_delta_mom, U, U_e, mu, beta):
+    shifts = get_shifts()
+    heat_fn = jax.vmap(jax.vmap(calculate_heat_released, 
+        in_axes=(None, 0, None, None, 0, None)), in_axes=(0, None, 0, 0, 0, None))
+    Q_deltas = heat_fn(P_ne, shifts, Q_delta_mom, U_I, U_Inbhd, mu)
+    logdensities = beta * Q_deltas
+    densities = jnp.exp(logdensities)
+    Z = jnp.sum(densities, axis=-1)
+    probabilities = densities / jnp.expand_dims(Z, axis=-1)
+    return probabilities, logdensities
 
 
 @partial(jax.jit, static_argnums=[4])

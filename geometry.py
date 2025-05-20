@@ -103,10 +103,10 @@ def generate_property_lattice(L, C, L_pad_value, C_pad_value):
     return jnp.where(L != L_pad_value, C[L], C_pad_value)
 
 
-def four_partition(R, L, pad_value):
+def four_partition(R, L, m, pad_value):
     """
-    Partitions the lattice L into eight isomorphic sets whose elements are all distance four apart
-    and collect the contained particles.
+    Partitions the lattice 'L' into eight isomorphic sets whose elements are all distance four apart.
+    The number of elements in each independent set should be at most 'm'. 
 
     R
         Array of particle positions. 2D, kx2.
@@ -116,7 +116,7 @@ def four_partition(R, L, pad_value):
         Scalar.
 
     Returns:
-        8xk Array whose rows contain the eight independent sets, pad_value padded. 
+        8xm Array whose rows contain the eight independent sets, pad_value padded. 
     """
     k, n = R.shape[0], L.shape[0]
     half_grid = jnp.indices(((n + 3) // 4, (n + 3) // 4)).at[:].multiply(4)
@@ -131,7 +131,7 @@ def four_partition(R, L, pad_value):
         return L.at[indices[0], indices[1]].get(mode="fill", fill_value=pad_value)
 
     P = jax.vmap(collect_part)(jnp.arange(8))
-    P = rearrange_padding(P, pad_value)[:, :k]
+    P = rearrange_padding(P, pad_value)[:, :m] 
 
     return P
 

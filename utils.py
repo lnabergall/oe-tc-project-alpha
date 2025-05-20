@@ -20,10 +20,6 @@ def replace(A, val1, val2):
     return jnp.where(A == val1, val2, A)
 
 
-def update(A, M, V):
-    return jnp.where(M, V, A)
-
-
 def place_2D(R, M, P):
     """Assign values from P into R at the row indices indicated by the 1D mask M."""
     M = jnp.broadcast_to(jnp.expand_dims(M, -1), M.shape + (2,))
@@ -93,10 +89,40 @@ def rearrange_padding(A, pad_value):
     return jax.vmap(rearrange_row)(A)
 
 
-def compute_group_sums(A, B, num_groups):
-    """Sums the values of A for each unique value in B and returns the sums indexed by B."""
-    group_sums = jax.ops.segment_sum(A, B, num_groups)
-    return group_sums[B]
+def compute_group_sums(A, B):
+    """
+    Sums the values of A for each unique value in B. Assumes same leading dimension size. 
+    Returns a 0-padded Array.
+    """
+    return jax.ops.segment_sum(A, B, num_segments=B.shape[0])
+
+
+def compute_subgroup_sums(A, I_A, B, I_B, pad_value):
+    k = B.shape[0]
+    B_I = jnp.where(I_A == pad_value, B[I_A], 2*k)
+    return jax.ops.segment_sum(A, B_I, num_segments=k)[I_B]
+
+
+def get_classes_by_id(I, A, pad_value):
+    """
+    Given a colouring A and pad_value-padded subset I of colors, 
+    returns the row indices i contained in the color classes of I.
+    """
+    k = A.shape[0]
+    return jnp.nonzero(jnp.isin(A, I), size=k, fill_value=pad_value)[0]
+
+
+def get_id_normalizer(A, pad_value):
+    """
+    Given a colouring A on not necessarily consecutive colors up to the size of A, 
+    returns a pad_value-padded array with the label for each color class 
+    after normalization to [0, j]. 
+    """
+    k = A.shape[0]
+    normalizer = jnp.full((k,), pad_value)
+    ids = jnp.unique(A, size=k, fill_value=2*k)
+    normalizer = normalizer.at[ids].set(jnp.arange(k), mode="drop")
+    return normalizer
 
 
 def normalize(A):
@@ -163,20 +189,3 @@ def smallest_missing(x, num_colors, pad_value):
     mask = jnp.zeros(num_colors, dtype=bool)
     mask = mask.at[x].set(True, mode="drop")
     return jnp.argmin(mask)
-
-
-def greedy_graph_coloring(edges, pad_value):
-    k = edges.shape[0]
-    colors = jnp.full(k, pad_value)
-
-    def color_vertex(i, colors):
-        neighbors = edges[i]
-        valid = (neighbors != pad_value) & (neighbors < i)
-        safe_nbrs = jnp.where(valid, neighbors, 2*k)
-        nbr_colors = colors.at[safe_nbrs].get(mode="fill", fill_value=2*k)
-        choice = smallest_missing(nbr_colors, k, pad_value)
-        colors = colors.at[i].set(choice)
-        return colors
-
-    colors = jax.lax.fori_loop(0, k, color_vertex, colors)
-    return colors
