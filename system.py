@@ -18,21 +18,26 @@ from log import *
 
 class InternalData(NamedTuple):
     # system
-    step: int                                       # sampling step
+    step: int                                   # sampling step
 
     # particle sampling
-    P_particles: jax.Array = None                   # independent Gibbs partition. 2D, 8xk.
-    logdensities: jax.Array = None                  # candidate state logdensities. 2D, kx5.
-    probabilities: jax.Array = None                 # candidate state probabilities. 2D, kx5.
-    emission_indicator: jax.Array = None            # emission event indicator. 1D, k.
+    P_particles: jax.Array = None               # independent Gibbs partition. 2D, 8xk.
+    logdensities: jax.Array = None              # candidate state logdensities. 2D, kx5.
+    probabilities: jax.Array = None             # candidate state probabilities. 2D, kx5.
+    emission_indicator: jax.Array = None        # emission event indicator. 1D, k.
 
-    # kinetics
-    P_v: jax.Array = None                           # Viscosity-damped momenta. 2D, kx2.
-    P_nv: jax.Array = None                          # Updated momenta without viscosity. 2D, kx2.
-    P_ne: jax.Array = None                          # Updated momenta without emissions. 2D, kx2.
-    Q_delta_mom: jax.Array = None                   # Pure momentum terms for the heat released. 1D, k.
-    E_emit: jax.Array = None                        # Energy emitted in the event of an emission. 1D, k.
-    K_ne: jax.Array = None                          # Kinetic energies corresponding to P_ne. 1D, k.
+    # particle kinetics
+    P_v: jax.Array = None                       # Viscosity-damped momenta. 2D, kx2.
+    P_nv: jax.Array = None                      # Updated momenta without viscosity. 2D, kx2.
+    P_ne: jax.Array = None                      # Updated momenta without emissions. 2D, kx2.
+    Q_delta_mom: jax.Array = None               # Pure momentum terms for the heat released. 1D, k.
+    E_emit: jax.Array = None                    # Energy emitted in the event of an emission. 1D, k.
+    K_ne: jax.Array = None                      # Kinetic energies corresponding to P_ne. 1D, k.
+
+    # bound state kinetics
+    P_nv_bs: jax.Array = None                   # Updated net molecule momenta without viscosity. 2D, kx2.
+    P_ne_bs: jax.Array = None                   # Updated net molecule momenta without emissions. 2D, kx2.
+    Q_delta_mom_bs: jax.Array = None            # Pure molecule momentum terms for the heat released. 1D, k.
 
 
 class SystemData(NamedTuple):
@@ -41,7 +46,6 @@ class SystemData(NamedTuple):
     L: jax.Array = None                     # labeled occupation lattice. 2D, nxn.
     LQ: jax.Array = None                    # charge-labeled occupation lattice. 2D, nxn.
     L_test: jax.Array = None                # labeled occupation lattice for test particles. 2D, nxn.
-    LQ_test: jax.Array = None               # charge-labeled occupation lattice for test particles. 2D, nxn.
     P: jax.Array = None                     # particle momenta. 2D, kx2.
     U: jax.Array = None                     # particle potential energies. 1D, k.
 
@@ -96,11 +100,11 @@ class ParticleSystem:
     charge_pad_value: int                   # scalar used for padding charge arrays
     emission_streams: int                   # number of emission events to parallel process
     boundstate_streams: int                 # number of parallel processes during bound state discovery 
+    particle_limit: int                     # upper bound on the size of an independent set of particles
     boundstate_limit: int                   # upper bound on the size of an independent set of molecules
-    boundstate_nbhr_limit: int              # upper bound on the number of 'neighbors' of a molecule
 
     # sampling
-    field_preloads: int                     # number of external fields to preload
+    field_preloads: int                     # number of external fields to preload, two per update step
 
     ### --- data fields with defaults ---
 
@@ -163,11 +167,11 @@ class ParticleSystem:
 
         ### particle phase
         # assemble the partition
-        P_particles = four_partition(data.R, data.L, self.pad_value)
+        P_particles = four_partition(data.R, data.L, self.particle_limit, self.pad_value)
         internal_data = internal_data._replace(step=step, P_particles=P_particles)
 
         # scan over partition
-        particle_scan_fn = lambda carry, I: self.particle_gibbs_step(carry[0], carry[1], I, carry[0])
+        particle_scan_fn = lambda carry, I: self.particle_gibbs_step(carry[0], carry[1], I, carry[2])
         (data, _), particle_step_info = jax.lax.scan(
             particle_scan_fn, (data, internal_data, key_particle), P_particles)
 
@@ -183,13 +187,22 @@ class ParticleSystem:
         bound_states, masses, coms = self.determine_bound_states(data, no_move)
         data = data._replace(bound_states=bound_states, masses=masses, coms=coms)
 
+        # get field and other precomputable data for current step
+        (external_field, net_field, P_ne, P_nv_bs, 
+            P_ne_bs, Q_delta_mom_bs) = self.boundstate_system_update_data(data)
+        data = data._replace(external_field=external_field, net_field=net_field, P=P_ne)
+        internal_data = internal_data._replace(
+            P_nv_bs=P_nv_bs, P_ne_bs=P_ne_bs, Q_delta_mom_bs=Q_delta_mom_bs)
+
         # determine a partition as a coloring
         C_boundstates = four_group_partition(data.bound_states, data.L, key_partition, self.pad_value)
 
-        # while_loop over coloring
-        pass
+        # while loop over coloring
+        cond_fn = lambda args: args[2] <= jnp.max(args[3])
+        data, internal, _, _, _ = jax.lax.while_loop(
+            cond_fn, self.boundstate_gibbs_step, (data, internal_data, 0, C_boundstates, key))
 
-        # collect per-boundstate data
+        # collect per-boundstate data?
         pass
 
         pass
@@ -201,50 +214,54 @@ class ParticleSystem:
         return data, internal_data, key 
 
     def particle_gibbs_step(self, data, internal_data, I, key):
-        R_I, Q_I = data.R[I], self.Q[I]
         K_ne = internal_data.K_ne[I]
 
-        L_test, LQ_test, R_Inbhd, U_Inbhd, U_I, is_bound = self.gibbs_update_data(data, I, R_I, Q_I, K_ne)
+        L_test, R_Inbhd, U_Inbhd, U_I, is_bound = self.particle_gibbs_update_data(data, I, K_ne)
+        P_ne = internal_data.P_ne[I]
 
         # determine emitters
         is_emitter = jax.vmap(determine_emissions, in_axes=(0, 0, 0, 0, None))(
             U_I, is_bound, internal_data.E_emit[I], K_ne, self.epsilon)
 
-        # prepare candidate states
-        shifts = get_shifts()
-        P_ne = internal_data.P_ne[I]
+        probabilities, logdensities = calculate_probabilities(
+            P_ne, internal_data.Q_delta_mom[I], U_I, U_Inbhd, self.mu, self.beta)
+        next_indices, key = gibbs_sample(key, probabilities)
 
-        # densities and partition function
-        heat_fn = jax.vmap(jax.vmap(calculate_heat_released, 
-            in_axes=(None, 0, None, None, 0, None)), in_axes=(0, None, 0, 0, 0, None))
-        Q_deltas = heat_fn(P_ne, shifts, internal_data.Q_delta_mom[I], U_I, U_Inbhd, self.mu)
-        logdensities = self.beta * Q_deltas
-        densities = jnp.exp(logdensities)
-        Z = jnp.sum(densities, axis=-1)
-
-        # sample next states
-        probabilities = densities / jnp.expand_dims(Z, axis=-1)
-        keys = jax.random.split(key, num=I.shape[0]+1)
-        key, keys_sample = keys[0], keys[1:]
-        next_indices = jax.vmap(sample)(keys_sample, probabilities, 5)
-
+        # update states and data
         next_indices = jnp.expand_dims(jnp.expand_dims(next_indices, axis=-1), axis=-1)
         next_positions = jnp.take_along_axis(R_Inbhd, next_indices, axis=1)
         no_move = next_indices == 0
         emission_indicator = jnp.logical_and(is_emitter, no_move) 
         P_new = jnp.where(emission_indicator, internal_data.P_v[I], P_ne)
 
-        # update states and data
-        I_indexer = jnp.where(I == self.pad_value, 2*self.k, I)
+        I_indexer = replace(I, self.pad_value, 2*self.k)
         R = data.R.at[I_indexer].set(next_positions, mode="drop")
         P = data.P.at[I_indexer].set(P_new, mode="drop")
-        L = add_to_lattice(L_test, I, R, self.pad_value)
+        L = add_to_lattice(L_test, I_indexer, R, self.pad_value)
         data = data._replace(R=R, P=P, L=L)
 
         return (data, key), (logdensities, probabilities, emission_indicator, U_Inbhd, is_bound, no_move)
 
-    def boundstate_gibbs_step(self, data, I, key):
-        pass
+    def boundstate_gibbs_step(self, data, internal_data, step, C_boundstates, key):
+        I = jnp.nonzero(C_boundstates == step, size=self.boundstate_limit, fill_value=self.pad_value)[0]
+        I_particles = get_classes_by_id(I, data.bound_states, self.pad_value)
+
+        L_test, com_Inbhd, U_Inbhd, U_I = self.boundstate_gibbs_update_data(data, I, I_particles)
+        P_ne = internal_data.P_ne_bs[I]
+        
+        probabilities, logdensities = calculate_probabilities(
+            P_ne, internal_data.Q_delta_mom_bs[I], U_I, U_Inbhd, self.mu, self.beta)
+        next_indices, key = gibbs_sample(key, probabilities)
+
+        # update states and data
+        new_shifts = shifts()[next_indices]
+        I_indexer = replace(I, self.pad_value, 2*self.k)
+        coms_new = data.coms.at[I_indexer].add(new_shifts, mode="drop")
+        R = move(data.R, data.coms, coms_new)
+        L = add_to_lattice(L_test, replace(I_particles, self.pad_value, 2*self.k), R, self.pad_value)
+        data = data._replace(R=R, L=L)
+
+        return data, internal_data, step + 1, C_boundstates, key 
 
     def generate_external_drives(self, key):
         """Generates external field values at the top of the lattice, plus the index of the starting set."""
@@ -254,37 +271,71 @@ class ParticleSystem:
         return external_fields, 0
 
     def system_update_data(self, data):
-        """Precomputable data needed for the update process."""
+        """Precomputable data needed for both phases of the update process."""
         # fields
         external_field = generate_drive_field(self.n, data.R, data.external_fields[data.ef_idx], masked)
         net_field = external_field[R[:, 0], R[:, 1]] + data.emission_field
 
         # kinetic terms
         P_v, P_nv, P_ne = calculate_momentum_vectors(data.P, net_field, self.Q, self.mu, self.gamma)
+
+        return external_field, net_field, P_v, P_nv, P_ne
+
+    def particle_system_update_data(self, data):
+        """Precomputable data needed for the particle update phase."""
+        external_field, net_field, P_v, P_nv, P_ne = self.system_update_data(data)
         Q_delta_momentum, E_emit, K_ne = jax.vmap(
             calculate_kinetic_factors)(data.P, P_nv, P_ne, self.M)
 
         return external_field, net_field, P_v, P_nv, P_ne, Q_delta_momentum, E_emit, K_ne
 
-    def gibbs_update_data(self, data, I, R_I, Q_I, K_ne):
-        """Multi-particle data needed for a single Gibbs update step."""
+    def boundstate_system_update_data(self, data):
+        external_field, net_field, _, P_nv, P_ne = self.system_update_data(data)
+
+        P_nv_bs = compute_group_sums(P_nv, data.bound_states)
+        P_ne_bs = compute_group_sums(P_ne, data.bound_states)
+
+        Q_delta_momentum_bs, _, _ = jax.vmap(calculate_partial_kinetic_factors)(
+            P_nv_bs, P_ne_bs, 2 * data.masses)
+
+        return external_field, net_field, P_ne, P_nv_bs, P_ne_bs, Q_delta_momentum_bs
+
+    def gibbs_update_data(self, data, I):
         # labeled occupation lattices without particles in I
         L_test = remove_from_lattice(data.L, I, self.pad_value)
         LQ_test = generate_property_lattice(L_test, self.Q, self.pad_value, self.charge_pad_value)
 
         # candidate positions
-        R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None))(R_I, self.n)
+        R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None))(data.R[I], self.n)
 
         # potential energies
         potential_energy_func = make_potential_energy_func(LQ_test, self.charge_pad_value)
-        U_Inbhd = jax.vmap(jax.vmap(potential_energy_func, in_axes=(0, None)), in_axes=0)(R_Inbhd, Q_I)
+        U_Inbhd = jax.vmap(jax.vmap(potential_energy_func, in_axes=(0, None)))(R_Inbhd, self.Q[I])
+
+        return L_test, R_Inbhd, U_Inbhd
+
+    def particle_gibbs_update_data(self, data, I, K_ne):
+        """Multi-particle data needed for a single particle-phase Gibbs update step."""
+        L_test, R_Inbhd, U_Inbhd = self.gibbs_update_data(data, I)
         U_I = U_Inbhd[:, 0]
 
         # bound state containment
         E_I = U_I + K_ne
         is_bound = bound(E_I)
 
-        return L_test, LQ_test, R_Inbhd, U_Inbhd, U_I, is_bound
+        return L_test, R_Inbhd, U_Inbhd, U_I, is_bound
+
+    def boundstate_gibbs_update_data(self, data, I, I_particles):
+        """Multi-particle data needed for a single bound state phase Gibbs update step."""
+        L_test, _, U_Inbhd_particles = self.gibbs_update_data(data, I_particles)
+        U_Inbhd = compute_group_sums(U_Inbhd_particles, I_particles, data.bound_states, I,
+                                     self.boundstate_limit, self.pad_value)
+        U_I = U_Inbhd[:, 0]
+
+        # candidate centers of mass
+        com_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None))(data.coms[I], self.n)
+
+        return L_test, com_Inbhd, U_Inbhd, U_I
 
     def generate_emissions(self, data, internal_data, emission_indicator):
         I = jnp.extract(emission_indicator, self.I, size=self.emission_streams, fill_value=2*self.k)
