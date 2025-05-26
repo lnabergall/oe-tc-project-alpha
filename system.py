@@ -44,10 +44,8 @@ class SystemData(NamedTuple):
     # system
     R: jax.Array                            # particle positions. 2D, kx2. 
     L: jax.Array = None                     # labeled occupation lattice. 2D, nxn.
-    LQ: jax.Array = None                    # charge-labeled occupation lattice. 2D, nxn.
     L_test: jax.Array = None                # labeled occupation lattice for test particles. 2D, nxn.
     P: jax.Array = None                     # particle momenta. 2D, kx2.
-    U: jax.Array = None                     # particle potential energies. 1D, k.
 
     # fields
     external_fields: jax.Array = None       # top fields produced by external drive. 3D, axnx2.
@@ -130,7 +128,41 @@ class ParticleSystem:
         return cls(*children, **aux_data)
 
     def initialize(self, key):
-        pass
+        key, key_positions, key_fields = jax.random.split(key, 3)
+
+        # data placeholders
+        k2_zeros_float = jnp.zeros((self.k, 2), dtype=float)
+        k_zeros_bool = jnp.zeros((self.k,), dtype=bool)
+        bound_states_default = jnp.arange(self.k)
+
+        R = sample_lattice_points(key_positions, self.n, self.k, replace=False)
+        L = generate_lattice(R, self.n, self.pad_value)
+
+        external_fields, ef_idx = self.generate_external_drives(key_fields)
+        external_field = jnp.zeros((self.n, self.n, 2), dtype=float)
+        emission_field = k2_zeros_float
+        net_field = k2_zeros_float
+
+        data = SystemData(R=R, L=L, L_test=L, P=k2_zeros_float, external_fields=external_fields, 
+                          ef_idx=ef_idx, external_field=external_field, emission_field=emission_field,
+                          net_field=net_field, bound_states=bound_states_default)
+
+        no_move_default = k_zeros_bool
+        bound_states, masses, coms = self.determine_bound_states(data, no_move_default)
+        data = data._replace(bound_states=bound_states, masses=masses, coms=coms)
+
+        # internal data placeholders
+        k_zeros_float = jnp.zeros((self.k,), dtype=float)
+        k5_zeros_float = jnp.zeros((self.k, 5), dtype=float)
+        8k_padding = jnp.full((8, self.k), self.pad_value)
+
+        internal_data = InternalData(
+            step=0, P_particles=8k_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
+            emission_indicator=k_zeros_bool, P_v=k2_zeros_float, P_nv=k2_zeros_float, 
+            P_ne=k2_zeros_float, Q_delta_mom=k_zeros_float, E_emit=k_zeros_float, K_ne=k_zeros_float, 
+            P_nv_bs=k2_zeros_float, P_ne_bs=k2_zeros_float, Q_delta_mom_bs=k_zeros_float)
+
+        return data, internal_data
 
     def run(self, key, steps):
         # initialize data
@@ -201,11 +233,6 @@ class ParticleSystem:
         cond_fn = lambda args: args[2] <= jnp.max(args[3])
         data, internal, _, _, _ = jax.lax.while_loop(
             cond_fn, self.boundstate_gibbs_step, (data, internal_data, 0, C_boundstates, key))
-
-        # collect per-boundstate data?
-        pass
-
-        pass
 
         # reset and generate emission field, make optional
         emission_field = self.generate_emissions(data, internal_data, emission_indicator)
