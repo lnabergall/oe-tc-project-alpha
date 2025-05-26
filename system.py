@@ -21,7 +21,7 @@ class InternalData(NamedTuple):
     step: int                                   # sampling step
 
     # particle sampling
-    P_particles: jax.Array = None               # independent Gibbs partition. 2D, 8xk.
+    P_particles: jax.Array = None               # independent Gibbs partition. 2D, 8xm.
     logdensities: jax.Array = None              # candidate state logdensities. 2D, kx5.
     probabilities: jax.Array = None             # candidate state probabilities. 2D, kx5.
     emission_indicator: jax.Array = None        # emission event indicator. 1D, k.
@@ -154,10 +154,10 @@ class ParticleSystem:
         # internal data placeholders
         k_zeros_float = jnp.zeros((self.k,), dtype=float)
         k5_zeros_float = jnp.zeros((self.k, 5), dtype=float)
-        8k_padding = jnp.full((8, self.k), self.pad_value)
+        _8m_padding = jnp.full((8, self.particle_limit), self.pad_value)
 
         internal_data = InternalData(
-            step=0, P_particles=8k_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
+            step=0, P_particles=_8k_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
             emission_indicator=k_zeros_bool, P_v=k2_zeros_float, P_nv=k2_zeros_float, 
             P_ne=k2_zeros_float, Q_delta_mom=k_zeros_float, E_emit=k_zeros_float, K_ne=k_zeros_float, 
             P_nv_bs=k2_zeros_float, P_ne_bs=k2_zeros_float, Q_delta_mom_bs=k_zeros_float)
