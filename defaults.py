@@ -55,6 +55,60 @@ CONFIGS = {
 
         "field_preloads": 2,
     },
+    "toy_small": {
+        "n": 40,
+        "k": 100,
+        "t": 2,
+        "N": jnp.array((80, 20)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 1.0,
+        "gamma": 1.0,
+
+        "mu": 1.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": 200,
+        "charge_pad_value": -2,
+        "emission_streams": 5,
+        "boundstate_streams": 5,
+        "particle_limit": 10,
+        "boundstate_limit": 20,
+
+        "field_preloads": 2,
+    },
+    "toy_medium": {
+        "n": 100,
+        "k": 500,
+        "t": 2,
+        "N": jnp.array((400, 100)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 1.0,
+        "gamma": 1.0,
+
+        "mu": 1.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": 1000,
+        "charge_pad_value": -2,
+        "emission_streams": 20,
+        "boundstate_streams": 20,
+        "particle_limit": 50,
+        "boundstate_limit": 100,
+
+        "field_preloads": 2,
+    },
 }
 
 
