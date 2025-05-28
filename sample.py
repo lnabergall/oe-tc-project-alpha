@@ -28,5 +28,5 @@ def gibbs_sample(key, probabilities):
     k = probabilities.shape[0]
     keys = jax.random.split(key, num=k+1)
     key, keys_sample = keys[0], keys[1:]
-    next_indices = jax.vmap(sample)(keys_sample, probabilities, 5)
+    next_indices = jax.vmap(sample, in_axes=(0, 0, None))(keys_sample, probabilities, 5)
     return next_indices, key

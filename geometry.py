@@ -42,12 +42,12 @@ def get_shifts():
 
 
 @partial(jax.jit, static_argnums=[1])
-def generate_neighorhood(x, n):
+def generate_neighborhood(x, n):
     """
     Generate the neighborhood of a point 'x' in a lattice of size n, 
     with periodic first dimension.
     """
-    return cylindrical_coordinates(x.reshape((1, 2)) + shifts(), n)
+    return cylindrical_coordinates(jnp.expand_dims(x, axis=0) + get_shifts(), n)
 
 
 @partial(jax.jit, static_argnums=[1])
@@ -84,7 +84,7 @@ def centered_square(L, r, delta):
     return square, positions
 
 
-@partial(jax.jit, static_argnums=[2])
+@partial(jax.jit, static_argnums=[1, 2])
 def generate_lattice(R, n, pad_value):
     L = jnp.full((n, n), pad_value)
     L = L.at[R[:, 0], R[:, 1]].set(jnp.arange(R.shape[0]))
@@ -139,11 +139,11 @@ def four_partition(R, L, m, pad_value):
         8xm Array whose rows contain the eight independent sets, pad_value padded. 
     """
     k, n = R.shape[0], L.shape[0]
-    half_grid = jnp.indices(((n + 3) // 4, (n + 3) // 4)).at[:].multiply(4)
 
     def collect_part(i):
         row_shift = i >= 4
         col_shift = i % 4
+        half_grid = jnp.indices(((n + 3) // 4, (n + 3) // 4)).at[:].multiply(4)
         half_grid = half_grid.at[0].add(row_shift)
         half_grid = half_grid.at[1].add(col_shift)
         half_grid = half_grid.reshape((half_grid.shape[0], -1))
@@ -159,7 +159,7 @@ def four_partition(R, L, m, pad_value):
 @partial(jax.jit, static_argnums=[3])
 def four_group_partition(bound_states, L, key, pad_value):
     k, m = bound_states.shape[0], jnp.max(bound_states)
-    L_bs = jnp.where(L == pad_value, 2*k, bound_states[L])
+    L_bs = jnp.where(L == pad_value, pad_value, bound_states[L])
     coloring = jnp.full((k,), pad_value)
     padding_mask = bound_states != pad_value
 
@@ -171,14 +171,14 @@ def four_group_partition(bound_states, L, key, pad_value):
 
     def cond_fn(args):
         coloring = args[1]
-        return jnp.any(color == pad_value)
+        return jnp.any(coloring == pad_value)
 
     def color_fn(args):
         step, coloring, key = args
         key, subkey = jax.random.split(key)
 
-        # random 64-bit priorities for mixing
-        priorities = jax.random.randint(subkey, (k,), 1, 2**63, dtype=jnp.uint64)
+        # random 32-bit priorities for mixing
+        priorities = jax.random.randint(subkey, (k,), 1, 2**30, dtype=int)
         priorities = jnp.where(coloring == pad_value, priorities, 0)
         L_p = priorities.at[L_bs].get(mode="fill", fill_value=0)
 
@@ -189,9 +189,9 @@ def four_group_partition(bound_states, L, key, pad_value):
 
         # choose uncoloured that never lost
         chosen = (lose_indicator == 0) & (coloring == pad_value) & padding_mask
-        coloring = coloring.at[chosen].set(step)
+        coloring = jnp.where(chosen, step, coloring)
 
         return step + 1, coloring, key
 
-    coloring, _ = jax.lax.while_loop(cond_fn, color_fn, (0, coloring, key))
+    _, coloring, _ = jax.lax.while_loop(cond_fn, color_fn, (0, coloring, key))
     return coloring

@@ -27,7 +27,7 @@ def test_potential_factors(r, LQ, LQ_pad_value):
     LQ_pad_value
         Scalar. 
     """
-    n = L.shape[0]
+    n = LQ.shape[0]
     nbhd_idxs = generate_neighborhood(r, n)
     nbhd_charges = LQ[nbhd_idxs[:, 0], nbhd_idxs[:, 1]]
     V_nbhd = jnp.where(nbhd_charges == LQ_pad_value, 0, nbhd_charges)
@@ -50,7 +50,7 @@ def test_potential(r, LQ, LQ_pad_value):
         Scalar. 
     """
     V_nbhd = test_potential_factors(r, LQ, LQ_pad_value)
-    V = jnp.where(nbhd_charges[0] == LQ_pad_value, jnp.sum(V_nbhd), jnp.inf)
+    V = jnp.where(LQ[r[0], r[1]] == LQ_pad_value, jnp.sum(V_nbhd), jnp.inf)
     return V
 
 
@@ -58,7 +58,6 @@ def potential_energy(V, q):
     return jnp.where(V == jnp.inf, jnp.inf, q * V)
 
 
-@partial(jax.jit, static_argnums=[1])
 def make_potential_energy_func(LQ, LQ_pad_value):
 
     def func(r, q):
@@ -73,25 +72,23 @@ def bound(E):
     return E < 0
 
 
-@partial(jax.jit, static_argnums=[5])
-def compute_bond_data(i, K, R, L, Q, pad_value):
+def compute_bond_data(i, K, R, L, Q):
     n, k = L.shape[0], R.shape[0]
     r, q = R[i], Q[i]
 
     r_nbhd = generate_open_neighorhood(r, n)
     nbhd = L[r_nbhd[:, 0], r_nbhd[:, 1]]
-    nbhd_safe = replace(nbhd, pad_value, 2*k)
-    nbhd_charges = Q.at[nbhd_safe].get(mode="fill", fill_value=0)
+    nbhd_charges = Q.at[nbhd].get(mode="fill", fill_value=0)
 
     energy_factors = q * nbhd_charges
     is_bound = (jnp.sum(energy_factors) + K) < 0
-    return nbhd_safe, energy_factors, is_bound
+    return nbhd, energy_factors, is_bound
 
 
 @partial(jax.jit, static_argnums=[3])
 def determine_bonds(energy_factors, nbhd, is_bound, pad_value):
     nbhd_bound = is_bound[nbhd]
-    bonded_nbhd = (energy_factors < 0) * nbhd_bound
+    bonded_nbhd = (energy_factors < 0) & nbhd_bound
     return jnp.extract(bonded_nbhd, nbhd, size=4, fill_value=pad_value)
 
 
@@ -101,7 +98,7 @@ def compute_bound_state(i, bonds, pad_value):
     i 
         Index of the particle whose bound state we are computing.
     bonds
-        Array of indices, pad_value-padded, which indicates the particles bonded to each particle. 
+        Array of indices with index-safe padding which indicates the particles bonded to each particle. 
         Should contain all the particles in a subset of the bound states. 2D, mx4.
     """
     state = bfs(bonds, i, pad_value)
@@ -131,8 +128,9 @@ def compute_bound_states(I, bonds, bound_states, visited, l, pad_value):
         repeats = jnp.sum(new_states, axis=0)
 
         new_states = jnp.sum(new_states * labels, axis=0) // repeats    # 0 becomes -1 from floor divide
-        bound_states = jnp.where(repeats, new_states, bound_states)
-        visited = jnp.where(repeats, True, visited)
+        visited_new = repeats.astype(bool)
+        bound_states = jnp.where(visited_new, new_states, bound_states)
+        visited = jnp.logical_or(visited_new, visited)
 
         I_slice = jnp.extract(~visited, I, size=l, fill_value=pad_value)
 
@@ -222,9 +220,9 @@ def masked(x, y, occupation_mask):
     return (v == 0) | (y <= i)
 
 
-@partial(jax.jit, static_argnums=[0, 3])
-def generate_drive_field(n, R, top_field, mask_func):
-    occupied = occupation_mask(n, R)
+@partial(jax.jit, static_argnums=[2, 3])
+def generate_drive_field(R, top_field, mask_func, n):
+    occupied = generate_unlabeled_lattice(R, n)
     field = jnp.broadcast_to(top_field, (n, n))
     mask_fn = lambda x, y: mask_func(x, y, occupied)
     particle_mask = jnp.fromfunction(mask_fn, (n, n), dtype=int)
@@ -265,6 +263,7 @@ def calculate_kinetic_factors(p, p_nv, p_ne, m):
 
 @partial(jax.jit, static_argnums=[5])
 def calculate_heat_released(p_ne, e, Q_delta_mom, U, U_e, mu):
+    e = e.astype(p_ne.dtype)
     Q_delta_pot = U_e - U
     Q_delta = Q_delta_mom + (mu * jnp.dot(p_ne, e)) - Q_delta_pot
     return Q_delta
@@ -275,7 +274,7 @@ def calculate_probabilities(P_ne, Q_delta_mom, U, U_e, mu, beta):
     shifts = get_shifts()
     heat_fn = jax.vmap(jax.vmap(calculate_heat_released, 
         in_axes=(None, 0, None, None, 0, None)), in_axes=(0, None, 0, 0, 0, None))
-    Q_deltas = heat_fn(P_ne, shifts, Q_delta_mom, U_I, U_Inbhd, mu)
+    Q_deltas = heat_fn(P_ne, shifts, Q_delta_mom, U, U_e, mu)
     logdensities = beta * Q_deltas
     densities = jnp.exp(logdensities)
     Z = jnp.sum(densities, axis=-1)
@@ -328,14 +327,15 @@ def calculate_emissions(r, L, M, Q, P, E_emit, delta, mu, pad_value):
     inv_distances = jnp.where(inv_distances == jnp.inf, 0.0, inv_distances)
     normalizer = 1 / jnp.sum(inv_distances * excited_mask)
 
-    directions = Lr_square_positions - jnp.expand_dims(jnp.expand_dims(r, axis=0), axis=0)
+    directions = Lr_square_positions - jnp.expand_dims(r, axis=0)
     Pr_norm_square = jnp.linalg.vector_norm(Pr_square, axis=-1, ord=1)
 
     field = 2 * Mr_square * normalizer * E_emit
     field = (Pr_norm_square ** 2) + (field * inv_distances)
-    field = jnp.sqrt(field) - Pr_norm_square
-    field = directions * inv_distances * field / (mu * Qr_square)
-    field = excited_particle_mask * field
+    field = jnp.expand_dims(jnp.sqrt(field) - Pr_norm_square, axis=-1)
+    field = directions * jnp.expand_dims(inv_distances, axis=-1) * field
+    field = field / (mu * jnp.expand_dims(Qr_square, axis=-1))
+    field = jnp.expand_dims(excited_particle_mask, axis=-1) * field 
 
     return field, Lr_square_positions
 

@@ -37,22 +37,20 @@ def unravel_2Dindex(i, dim2):
     return jnp.array((i // dim2, i % dim2))
 
 
-def remove_rows_jit(A, I, pad_value=-1):
+def remove_rows(A, I, pad_value):
     k = A.shape[0]
-    I = jnp.where(I == pad_value, 2*k, I)
     keep_mask = jnp.ones((k,), dtype=bool)
     keep_mask = keep_mask.at[I].set(False, mode="drop")
-    keep_indices = jnp.where(keep_mask, size=k, fill_value=k+1)
+    keep_indices = jnp.where(keep_mask, size=k, fill_value=pad_value)
     A_minus = A.at[keep_indices].get(mode="fill", fill_value=pad_value)
     return A_minus
 
 
-def compactify_partition(P, V, k, pad_value):
+def compactify_partition(P, V, k):
     """
     Convert values 'V' on a padded 2D partition 'P' into a 1D properties array. 
     Assumes P is a partition of k elements.
     """
-    P = jnp.where(P == pad_value, 2*k, P)
     V_comp = jnp.zeros((k,) + V.shape[2:], dtype=V.dtype)
     V_comp = V_comp.at[P].set(V, mode="drop")
     return V_comp
@@ -97,10 +95,10 @@ def compute_group_sums(A, B):
     return jax.ops.segment_sum(A, B, num_segments=B.shape[0])
 
 
-def compute_subgroup_sums(A, I_A, B, I_B, pad_value):
-    k = B.shape[0]
-    B_I = jnp.where(I_A == pad_value, B[I_A], 2*k)
-    return jax.ops.segment_sum(A, B_I, num_segments=k)[I_B]
+def compute_subgroup_sums(A, I_A, I, I_B, pad_value):
+    k = I.shape[0]
+    B = I.at[I_A].get(mode="fill", fill_value=pad_value)
+    return jax.ops.segment_sum(A, B, num_segments=k)[I_B]
 
 
 def get_classes_by_id(I, A, pad_value):
@@ -120,7 +118,7 @@ def get_id_normalizer(A, pad_value):
     """
     k = A.shape[0]
     normalizer = jnp.full((k,), pad_value)
-    ids = jnp.unique(A, size=k, fill_value=2*k)
+    ids = jnp.unique(A, size=k, fill_value=pad_value)
     normalizer = normalizer.at[ids].set(jnp.arange(k), mode="drop")
     return normalizer
 
@@ -142,7 +140,7 @@ def bfs(edges, i, pad_value):
     The ith row of 'edges' is the neighborhood of vertex i. 
 
     edges
-        Array of vertices with padding. 2D.
+        Array of vertices with index-safe padding. 2D.
     i
         Starting vertex.
     pad_value
@@ -155,6 +153,7 @@ def bfs(edges, i, pad_value):
     queue = jnp.full((k,), pad_value, dtype=int)
     queue = queue.at[0].set(i)
     head, tail = 0, 1
+    d_range = jnp.arange(d)
 
     def cond_fn(state):
         _, _, head, tail = state
@@ -167,15 +166,14 @@ def bfs(edges, i, pad_value):
 
         neighbors = edges[current]
 
-        # mark unvisited neighbors 
-        valid = (neighbors != pad_value) & (~visited[neighbors])
-        visited = jnp.where(valid, visited.at[neighbors].set(True), visited)
+        # mark newly visited neighbors 
+        visited = visited.at[neighbors].set(True, mode="drop")
 
         # add them to queue and update tail
+        valid = (neighbors != pad_value) & (~visited[neighbors])
         num_valid = jnp.sum(valid)
-        queue_range = jnp.arange(tail, tail+num_valid)
-        unvisited = jnp.extract(valid, neighbors, size=d, fill_value=2*k)
-        queue = queue.at[queue_range].set(unvisited, mode="drop")
+        unvisited = jnp.extract(valid, neighbors, size=d, fill_value=pad_value)
+        queue = queue.at[d_range + tail].set(unvisited, mode="drop")
         tail += num_valid
 
         return visited, queue, head, tail
