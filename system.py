@@ -402,7 +402,6 @@ class ParticleSystem:
 
         # particles in recomputed bound states
         active_indicator = jnp.isin(data.bound_states, bs_active)
-        I = jnp.extract(active_indicator, self.I, size=self.k, fill_value=self.pad_value)
 
         # all bonds
         K = kinetic_energy(data.P, self.M)
@@ -414,7 +413,7 @@ class ParticleSystem:
         # bound states
         visited = ~active_indicator
         bound_states = jnp.where(active_indicator, self.pad_value, data.bound_states)
-        bound_states = compute_bound_states(I, bonds, bound_states, visited, 
+        bound_states = compute_bound_states(self.I, bonds, bound_states, visited, 
                                             self.boundstate_streams, self.pad_value)
         coms, masses = centers_of_mass(data.R, self.M, bound_states)
 
