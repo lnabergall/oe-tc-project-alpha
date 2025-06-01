@@ -44,7 +44,6 @@ class SystemData(NamedTuple):
     # system
     R: jax.Array                            # particle positions. 2D, kx2. 
     L: jax.Array = None                     # labeled occupation lattice. 2D, nxn.
-    L_test: jax.Array = None                # labeled occupation lattice for test particles. 2D, nxn.
     P: jax.Array = None                     # particle momenta. 2D, kx2.
 
     # fields
@@ -94,8 +93,7 @@ class ParticleSystem:
     delta: float                            # range of emission events
 
     # bookkeeping
-    pad_value: int                          # scalar used for padding most arrays, should be index-safe
-    charge_pad_value: int                   # scalar used for padding charge arrays
+    pad_value: int                          # scalar used for padding arrays, should be index-safe (> k,n)
     emission_streams: int                   # number of emission events to parallel process
     boundstate_streams: int                 # number of parallel processes during bound state discovery 
     particle_limit: int                     # upper bound on the size of an independent set of particles
@@ -143,7 +141,7 @@ class ParticleSystem:
         emission_field = k2_zeros_float
         net_field = k2_zeros_float
 
-        data = SystemData(R=R, L=L, L_test=L, P=k2_zeros_float, external_fields=external_fields, 
+        data = SystemData(R=R, L=L, P=k2_zeros_float, external_fields=external_fields, 
                           ef_idx=ef_idx, external_field=external_field, emission_field=emission_field,
                           net_field=net_field, bound_states=bound_states_default)
 
@@ -227,10 +225,12 @@ class ParticleSystem:
             P_nv_bs=P_nv_bs, P_ne_bs=P_ne_bs, Q_delta_mom_bs=Q_delta_mom_bs)
 
         # determine a partition as a coloring
-        C_boundstates = four_group_partition(data.bound_states, data.L, key_partition, self.pad_value)
+        C_boundstates = four_group_partition(data.bound_states, data.L, key_partition, 
+                                             self.boundstate_limit, self.pad_value)
 
         # while loop over coloring
-        cond_fn = lambda args: args[2] <= jnp.max(args[3])
+        C_bs_safe = replace(C_boundstates, self.pad_value, -1)
+        cond_fn = lambda args: args[2] <= jnp.max(C_bs_safe)
         boundstate_loop_fn = lambda args: self.boundstate_gibbs_step(*args)
         data, internal_data, _, _, _ = jax.lax.while_loop(
             cond_fn, boundstate_loop_fn, (data, internal_data, 0, C_boundstates, key))
@@ -251,8 +251,9 @@ class ParticleSystem:
         is_emitter = jax.vmap(determine_emissions, in_axes=(0, 0, 0, 0, None))(
             U_I, is_bound, internal_data.E_emit[I], K_ne, self.epsilon)
 
+        boundary_mask = R_Inbhd[:, :, 1] != self.pad_value
         probabilities, logdensities = calculate_probabilities(
-            P_ne, internal_data.Q_delta_mom[I], U_I, U_Inbhd, self.mu, self.beta)
+            P_ne, internal_data.Q_delta_mom[I], U_I, U_Inbhd, boundary_mask, self.mu, self.beta)
         next_indices, key = gibbs_sample(key, probabilities)
 
         # update states and data
@@ -274,17 +275,17 @@ class ParticleSystem:
         I = jnp.nonzero(C_boundstates == step, size=self.boundstate_limit, fill_value=self.pad_value)[0]
         I_particles = get_classes_by_id(I, data.bound_states, self.pad_value)
 
-        L_test, com_Inbhd, U_Inbhd, U_I = self.boundstate_gibbs_update_data(data, I, I_particles)
+        L_test, com_Inbhd, boundary_mask, U_Inbhd, U_I = self.boundstate_gibbs_update_data(data, I, I_particles)
         P_ne = internal_data.P_ne_bs[I]
         
         probabilities, logdensities = calculate_probabilities(
-            P_ne, internal_data.Q_delta_mom_bs[I], U_I, U_Inbhd, self.mu, self.beta)
+            P_ne, internal_data.Q_delta_mom_bs[I], U_I, U_Inbhd, boundary_mask, self.mu, self.beta)
         next_indices, key = gibbs_sample(key, probabilities)
 
         # update states and data
         new_shifts = get_shifts()[next_indices]
         coms_new = data.coms.at[I].add(new_shifts.astype(float), mode="drop")
-        R = move(data.R, data.coms, coms_new)
+        R = move(data.R, data.coms, coms_new, self.n)
         L = add_to_lattice(L_test, I_particles, R, self.pad_value)
         data = data._replace(R=R, L=L)
 
@@ -331,13 +332,14 @@ class ParticleSystem:
     def gibbs_update_data(self, data, I):
         # labeled occupation lattices without particles in I
         L_test = remove_from_lattice(data.L, I, self.pad_value)
-        LQ_test = generate_property_lattice(L_test, self.Q, self.pad_value, self.charge_pad_value)
+        LQ_test = generate_property_lattice(L_test, self.Q, self.pad_value)
 
         # candidate positions
-        R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None))(data.R[I], self.n)
+        R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
+            data.R[I], self.n, self.pad_value)
 
         # potential energies
-        potential_energy_func = make_potential_energy_func(LQ_test, self.charge_pad_value)
+        potential_energy_func = make_potential_energy_func(LQ_test, self.pad_value)
         U_Inbhd = jax.vmap(jax.vmap(potential_energy_func, in_axes=(0, None)))(R_Inbhd, self.Q[I])
 
         return L_test, R_Inbhd, U_Inbhd
@@ -355,15 +357,22 @@ class ParticleSystem:
 
     def boundstate_gibbs_update_data(self, data, I, I_particles):
         """Multi-particle data needed for a single bound state phase Gibbs update step."""
-        L_test, _, U_Inbhd_particles = self.gibbs_update_data(data, I_particles)
+        L_test, R_Inbhd_particles, U_Inbhd_particles = self.gibbs_update_data(data, I_particles)
         U_Inbhd = compute_subgroup_sums(U_Inbhd_particles, I_particles, 
                                         data.bound_states, I, self.pad_value)
         U_I = U_Inbhd[:, 0]
 
         # candidate centers of mass
-        com_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None))(data.coms[I], self.n)
+        com_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
+            data.coms[I], self.n, self.pad_value)
 
-        return L_test, com_Inbhd, U_Inbhd, U_I
+        # boundary mask
+        out_by_molecule = compute_subgroup_sums(
+            (R_Inbhd_particles == self.pad_value).astype(int), I_particles, 
+            data.bound_states, I, self.pad_value)
+        boundary_mask = ~out_by_molecule[:, :, 1].astype(bool)
+
+        return L_test, com_Inbhd, boundary_mask, U_Inbhd, U_I
 
     def generate_emissions(self, data, internal_data, emission_indicator):
         I = jnp.extract(emission_indicator, self.I, size=self.emission_streams, fill_value=self.pad_value)
@@ -405,8 +414,8 @@ class ParticleSystem:
 
         # all bonds
         K = kinetic_energy(data.P, self.M)
-        bond_data_fn = jax.vmap(compute_bond_data, in_axes=(0, 0, None, None, None))
-        nbhds, factors, is_bound = bond_data_fn(self.I, K, data.R, data.L, self.Q)
+        bond_data_fn = jax.vmap(compute_bond_data, in_axes=(0, 0, None, None, None, None))
+        nbhds, factors, is_bound = bond_data_fn(self.I, K, data.R, data.L, self.Q, self.pad_value)
         bonds = jax.vmap(determine_bonds, in_axes=(0, 0, None, None))(
             factors, nbhds, is_bound, self.pad_value)
 
