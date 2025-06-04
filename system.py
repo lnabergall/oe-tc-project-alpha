@@ -211,6 +211,10 @@ class ParticleSystem:
             compactify_fn, particle_step_info)
         internal_data = internal_data._replace(logdensities=logdensities, probabilities=probabilities, 
                                                emission_indicator=emission_indicator)
+        
+        # update lattice
+        L = generate_lattice(data.R, self.n, self.pad_value)
+        data = data._replace(L=L)
 
         ### bound state phase
         # calculate bound states
@@ -235,6 +239,10 @@ class ParticleSystem:
         data, internal_data, _, _, _ = jax.lax.while_loop(
             cond_fn, boundstate_loop_fn, (data, internal_data, 0, C_boundstates, key))
 
+        # update lattice
+        L = generate_lattice(data.R, self.n, self.pad_value)
+        data = data._replace(L=L)
+
         # reset and generate emission field, make optional
         emission_field = self.generate_emissions(data, internal_data, emission_indicator)
         data = data._replace(emission_field=emission_field)
@@ -244,7 +252,7 @@ class ParticleSystem:
     def particle_gibbs_step(self, data, internal_data, I, key):
         K_ne = internal_data.K_ne[I]
 
-        L_test, R_Inbhd, U_Inbhd, U_I, is_bound = self.particle_gibbs_update_data(data, I, K_ne)
+        R_Inbhd, U_Inbhd, U_I, is_bound = self.particle_gibbs_update_data(data, I, K_ne)
         P_ne = internal_data.P_ne[I]
 
         # determine emitters
@@ -265,8 +273,7 @@ class ParticleSystem:
 
         R = data.R.at[I].set(jnp.squeeze(next_positions, axis=1), mode="drop")
         P = data.P.at[I].set(P_new, mode="drop")
-        L = add_to_lattice(L_test, I, R, self.pad_value)
-        data = data._replace(R=R, P=P, L=L)
+        data = data._replace(R=R, P=P)
 
         return (data, internal_data, key), (logdensities, probabilities, 
             emission_indicator, U_Inbhd, is_bound, no_move)
@@ -275,7 +282,7 @@ class ParticleSystem:
         I = jnp.nonzero(C_boundstates == step, size=self.boundstate_limit, fill_value=self.pad_value)[0]
         I_particles = get_classes_by_id(I, data.bound_states, self.pad_value)
 
-        L_test, com_Inbhd, boundary_mask, U_Inbhd, U_I = self.boundstate_gibbs_update_data(data, I, I_particles)
+        com_Inbhd, boundary_mask, U_Inbhd, U_I = self.boundstate_gibbs_update_data(data, I, I_particles)
         P_ne = internal_data.P_ne_bs[I]
         
         probabilities, logdensities = calculate_probabilities(
@@ -286,8 +293,7 @@ class ParticleSystem:
         new_shifts = get_shifts()[next_indices]
         coms_new = data.coms.at[I].add(new_shifts.astype(float), mode="drop")
         R = move(data.R, data.coms, coms_new, self.n)
-        L = add_to_lattice(L_test, I_particles, R, self.pad_value)
-        data = data._replace(R=R, L=L)
+        data = data._replace(R=R)
 
         return data, internal_data, step + 1, C_boundstates, key 
 
@@ -330,34 +336,29 @@ class ParticleSystem:
         return external_field, net_field, P_ne, P_nv_bs, P_ne_bs, Q_delta_momentum_bs
 
     def gibbs_update_data(self, data, I):
-        # labeled occupation lattices without particles in I
-        L_test = remove_from_lattice(data.L, I, self.pad_value)
-        LQ_test = generate_property_lattice(L_test, self.Q, self.pad_value)
-
         # candidate positions
         R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
             data.R[I], self.n, self.pad_value)
 
-        # potential energies
-        potential_energy_func = make_potential_energy_func(LQ_test, self.pad_value)
-        U_Inbhd = jax.vmap(jax.vmap(potential_energy_func, in_axes=(0, None)))(R_Inbhd, self.Q[I])
+        U_Inbhd = neighborhood_potential_energies(
+            I, R_Inbhd, self.Q, data.R, self.n, self.pad_value)
 
-        return L_test, R_Inbhd, U_Inbhd
+        return R_Inbhd, U_Inbhd
 
     def particle_gibbs_update_data(self, data, I, K_ne):
         """Multi-particle data needed for a single particle-phase Gibbs update step."""
-        L_test, R_Inbhd, U_Inbhd = self.gibbs_update_data(data, I)
+        R_Inbhd, U_Inbhd = self.gibbs_update_data(data, I)
         U_I = U_Inbhd[:, 0]
         
         # bound state containment
         E_I = U_I + K_ne
         is_bound = bound(E_I)
 
-        return L_test, R_Inbhd, U_Inbhd, U_I, is_bound
+        return R_Inbhd, U_Inbhd, U_I, is_bound
 
     def boundstate_gibbs_update_data(self, data, I, I_particles):
         """Multi-particle data needed for a single bound state phase Gibbs update step."""
-        L_test, R_Inbhd_particles, U_Inbhd_particles = self.gibbs_update_data(data, I_particles)
+        R_Inbhd_particles, U_Inbhd_particles = self.gibbs_update_data(data, I_particles)
         U_Inbhd = compute_subgroup_sums(U_Inbhd_particles, I_particles, 
                                         data.bound_states, I, self.pad_value)
         U_I = U_Inbhd[:, 0]
@@ -372,7 +373,7 @@ class ParticleSystem:
             data.bound_states, I, self.pad_value)
         boundary_mask = ~out_by_molecule[:, :, 1].astype(bool)
 
-        return L_test, com_Inbhd, boundary_mask, U_Inbhd, U_I
+        return com_Inbhd, boundary_mask, U_Inbhd, U_I
 
     def generate_emissions(self, data, internal_data, emission_indicator):
         I = jnp.extract(emission_indicator, self.I, size=self.emission_streams, fill_value=self.pad_value)

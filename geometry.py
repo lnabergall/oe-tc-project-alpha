@@ -6,6 +6,10 @@ import jax.numpy as jnp
 from utils import *
 
 
+def lattice_indices(A, n):
+    return (A[..., 0] * n) + A[..., 1]
+
+
 @partial(jax.jit, static_argnums=[1])
 def cylindrical_coordinates(A, n):
     """
@@ -53,7 +57,7 @@ def generate_neighborhood(x, n, pad_value):
 
 
 @partial(jax.jit, static_argnums=[1])
-def generate_open_neighorhood(x, n, pad_value):
+def generate_open_neighborhood(x, n, pad_value):
     """
     Generate the neighborhood of a point 'x' in a lattice of size n, with periodic first dimension, 
     strict boundaries on the second dimension, and excluding 'x' itself.
@@ -62,6 +66,17 @@ def generate_open_neighorhood(x, n, pad_value):
     nbhd = cylindrical_coordinates(x.reshape((1, 2)) + steps, n)
     nbhd = jnp.where((nbhd >= n) | (nbhd < 0), pad_value, nbhd)
     return nbhd
+
+
+def neighborhood_mask(nbhd, R, n, pad_value):
+    """
+    Generates a 2D mask indicating where elements of 'nbhd' and 'R' coincide. 
+    The first dimension indexes 'nbhd' while the second indexes 'R'.
+    """
+    nbhd_indices = lattice_indices(nbhd, n)     # open nbhd
+    R_indices = lattice_indices(R, n)
+    nbhd_mask = nbhd_indices[:, None, :] == R_indices[:, None][None, :, :]
+    return nbhd_mask
 
 
 @partial(jax.jit, static_argnums=[1,2])
