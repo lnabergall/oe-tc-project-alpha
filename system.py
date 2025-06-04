@@ -347,7 +347,11 @@ class ParticleSystem:
 
     def particle_gibbs_update_data(self, data, I, K_ne):
         """Multi-particle data needed for a single particle-phase Gibbs update step."""
-        R_Inbhd, U_Inbhd = self.gibbs_update_data(data, I)
+        R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
+            data.R[I], self.n, self.pad_value)
+
+        U_Inbhd = neighborhood_potential_energies(
+            I, R_Inbhd, self.Q, data.R, self.n, self.pad_value)
         U_I = U_Inbhd[:, 0]
         
         # bound state containment
@@ -358,7 +362,13 @@ class ParticleSystem:
 
     def boundstate_gibbs_update_data(self, data, I, I_particles):
         """Multi-particle data needed for a single bound state phase Gibbs update step."""
-        R_Inbhd_particles, U_Inbhd_particles = self.gibbs_update_data(data, I_particles)
+        R_Inbhd_particles = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
+            data.R[I_particles], self.n, self.pad_value)
+        buffer_size = self.boundstate_limit
+        U_Inbhd_particles = neighborhood_potential_energies_dynamic(
+            I_particles, R_Inbhd_particles, self.Q, data.R, self.I, 
+            self.n, buffer_size, self.pad_value)
+
         U_Inbhd = compute_subgroup_sums(U_Inbhd_particles, I_particles, 
                                         data.bound_states, I, self.pad_value)
         U_I = U_Inbhd[:, 0]

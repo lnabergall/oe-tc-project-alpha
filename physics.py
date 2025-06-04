@@ -39,7 +39,38 @@ def neighborhood_potential_energies(I, nbhd_I, Q, R, n, pad_value):
     U_nbhd += jnp.nan_to_num(nbhd_occupation * jnp.inf, posinf=jnp.inf)
     return U_nbhd
 
-### add while loop trick
+
+@partial(jax.jit, static_argnums=[5, 6, 7])
+def neighborhood_potential_energies_dynamic(I, nbhd_I, Q, R, indices, n, buffer_size, pad_value):
+    remaining = I != pad_value
+    slice_ = jnp.extract(remaining, indices, size=buffer_size, fill_value=pad_value)
+    U_nbhd = jnp.zeros(nbhd_I.shape[:2])
+
+    def cond_fn(args):
+        remaining = args[2]
+        return jnp.any(remaining)
+
+    def potential_fn(args):
+        U_nbhd, slice_, remaining = args
+        I_slice = I[slice_]
+        nbhd_I_slice = nbhd_I[slice_]
+        Q_Is = Q[I_slice]
+        R_test = R.at[I_slice].set(pad_value)
+
+        # for pauli exclusion
+        nbhd_occupation = occupied_neighbors(nbhd_I_slice, R_test, n, pad_value)
+
+        U_nbhd_slice = jax.vmap(test_potential_energies, in_axes=(1, None, None, None, None, None))(
+            nbhd_I_slice, Q_Is, R_test, Q, n, pad_value).T
+
+        # update the carry
+        U_nbhd.at[slice_].add(U_nbhd_slice + jnp.nan_to_num(nbhd_occupation * jnp.inf, posinf=jnp.inf))
+        remaining = remaining.at[slice_].set(False)
+        slice_ = jnp.extract(remaining, I, size=buffer_size, fill_value=pad_value)
+        return U_nbhd, slice_, remaining
+
+    U_nbhd = jax.lax.while_loop(cond_fn, potential_fn, (U_nbhd, slice_, remaining))[0]
+    return U_nbhd
 
 
 def bound(E):
