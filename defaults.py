@@ -52,7 +52,7 @@ if __name__ == '__main__':
     config["seed"] = 12
     config["logging"] = logging
     config["saving"] = saving
-    config["snapshot_period"] = snapshot_period
+    config["snapshot_period"] = snapshot_period or 0
     key = jax.random.key(config["seed"])
 
     particle_system = System(**config)
