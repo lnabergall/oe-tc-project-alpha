@@ -1,12 +1,14 @@
 import warnings
 import argparse
 from contextlib import nullcontext
+from datetime import datetime, UTC
 
 import jax
 import jax.numpy as jnp
 
 from system import ParticleSystem as System
 from log import setup_logging, jax_log_info
+from storage import *
 
 
 warnings.filterwarnings('error')  # turn warnings into errors
@@ -20,16 +22,21 @@ def get_config():
     parser = argparse.ArgumentParser(description="Run a driven particle model.")
     parser.add_argument("--config")
     parser.add_argument("--steps")
+    parser.add_argument("--logging", action="store_true")
+    parser.add_argument("--storing", action="store_true")
+    parser.add_argument("--snapshot_period")
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--nojit", action="store_true")
     args = parser.parse_args()
     config = CONFIGS[args.config.lower()]
-    return config, args.steps, args.profile, args.cpu, args.nojit
+    return (config, args.steps, args.logging, args.storing, 
+            args.snapshot_period, args.profile, args.cpu, args.nojit)
 
 
 CONFIGS = {
     "toy_tiny": {
+        "name": "toy_tiny",
         "n": 12,    # multiple of 4
         "k": 12,
         "t": 2,
@@ -56,6 +63,7 @@ CONFIGS = {
         "field_preloads": 10,
     },
     "toy_small": {
+        "name": "toy_small",
         "n": 40,    # multiple of 4
         "k": 100,
         "t": 2,
@@ -82,6 +90,7 @@ CONFIGS = {
         "field_preloads": 10,
     },
     "toy_medium": {
+        "name": "toy_medium",
         "n": 100,    # multiple of 4
         "k": 500,
         "t": 2,
@@ -108,6 +117,7 @@ CONFIGS = {
         "field_preloads": 10,
     },
     "toy_large": {
+        "name": "toy_large",
         "n": 248,    # multiple of 4
         "k": 2500,
         "t": 2,
@@ -134,6 +144,7 @@ CONFIGS = {
         "field_preloads": 10,
     },
     "toy_huge": {
+        "name": "toy_huge",
         "n": 500,    # multiple of 4
         "k": 10000,
         "t": 2,
@@ -160,6 +171,7 @@ CONFIGS = {
         "field_preloads": 10,
     },
     "toy_massive": {
+        "name": "toy_massive",
         "n": 800,    # multiple of 4
         "k": 25000,
         "t": 2,
@@ -189,7 +201,7 @@ CONFIGS = {
 
 
 if __name__ == '__main__':
-    config, steps, profiling, use_cpu, no_jit = get_config()
+    config, steps, logging, storing, snapshot_period, profiling, use_cpu, no_jit = get_config()
     if use_cpu:
         device = jax.devices("cpu")[0]
         jax.config.update("jax_default_device", device)
@@ -202,8 +214,17 @@ if __name__ == '__main__':
     setup_logging()
     jax_log_info("Using device: " + device.__repr__())
 
-    key = jax.random.key(12)
+    config["time"] = datetime.now(UTC)
+    config["seed"] = 12
+    config["logging"] = logging
+    config["storing"] = storing
+    config["snapshot_period"] = snapshot_period
+    key = jax.random.key(config["seed"])
+
     particle_system = System(**config)
+
+    if storing:
+        save_config(config)
 
     if profiling:
         jax.profiler.start_trace("/tmp/jax-trace", create_perfetto_link=True)

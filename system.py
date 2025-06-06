@@ -1,9 +1,7 @@
+from datetime import datetime
 from functools import partial
 from dataclasses import dataclass, field, asdict
 from typing import NamedTuple
-from operator import itemgetter
-
-import numpy as np
 
 import jax
 import jax.numpy as jnp
@@ -14,12 +12,10 @@ from physics import *
 from geometry import *
 from utils import *
 from log import *
+from storage import *
 
 
 class InternalData(NamedTuple):
-    # system
-    step: int                                   # sampling step
-
     # particle sampling
     P_particles: jax.Array = None               # independent Gibbs partition. 2D, 8xm.
     logdensities: jax.Array = None              # candidate state logdensities. 2D, kx5.
@@ -41,6 +37,9 @@ class InternalData(NamedTuple):
 
 
 class SystemData(NamedTuple):
+    # context
+    step: int                               # sampling step
+
     # system
     R: jax.Array                            # particle positions. 2D, kx2. 
     L: jax.Array = None                     # labeled occupation lattice. 2D, nxn.
@@ -100,7 +99,17 @@ class ParticleSystem:
     boundstate_limit: int                   # upper bound on the size of an independent set of molecules
 
     # sampling
+    seed: int                               # seed for the PRNG
     field_preloads: int                     # number of external fields to preload, two per update step
+
+    # additional information
+    name: str                               # indexing name of the system configuration
+    time: datetime                          # when the system was created, used for ID and/or seeding 
+
+    # logging and storage
+    logging: bool                           # toggles optional logging
+    storing: bool                           # toggles data storage
+    snapshot_period: int                    # number of update steps between snapshots
 
     ### --- data fields with defaults ---
 
@@ -125,6 +134,10 @@ class ParticleSystem:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, **aux_data)
 
+    def save_state(self, data):
+        args = (data, self.config_name, self.time)
+        jax.experimental.io_callback(save_state, args, args, ordered=True)
+
     def initialize(self, key):
         key, key_positions, key_fields = jax.random.split(key, 3)
 
@@ -141,9 +154,12 @@ class ParticleSystem:
         emission_field = k2_zeros_float
         net_field = k2_zeros_float
 
-        data = SystemData(R=R, L=L, P=k2_zeros_float, external_fields=external_fields, 
+        data = SystemData(step=0, R=R, L=L, P=k2_zeros_float, external_fields=external_fields, 
                           ef_idx=ef_idx, external_field=external_field, emission_field=emission_field,
                           net_field=net_field, bound_states=bound_states_default)
+
+        if self.saving:
+            initialize_hdf5(data, self.name, self.time)
 
         no_move_default = k_zeros_bool
         bound_states, masses, coms = self.determine_bound_states(data, no_move_default)
@@ -155,7 +171,7 @@ class ParticleSystem:
         _8m_padding = jnp.full((8, self.particle_limit), self.pad_value)
 
         internal_data = InternalData(
-            step=0, P_particles=_8m_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
+            P_particles=_8m_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
             emission_indicator=k_zeros_bool, P_v=k2_zeros_float, P_nv=k2_zeros_float, 
             P_ne=k2_zeros_float, Q_delta_mom=k_zeros_float, E_emit=k_zeros_float, K_ne=k_zeros_float, 
             P_nv_bs=k2_zeros_float, P_ne_bs=k2_zeros_float, Q_delta_mom_bs=k_zeros_float)
@@ -186,7 +202,7 @@ class ParticleSystem:
         fields_consumed = data.ef_idx >= data.external_fields.shape[0]
         external_fields, ef_idx = jax.lax.cond(
             fields_consumed, self.generate_external_drives, null_fn, key_drive)
-        data = data._replace(external_fields=external_fields, ef_idx=ef_idx)
+        data = data._replace(step=step, external_fields=external_fields, ef_idx=ef_idx)
 
         # get field and other precomputable data for current step
         (external_field, net_field, P_v, 
@@ -195,10 +211,14 @@ class ParticleSystem:
         internal_data = internal_data._replace(P_v=P_v, P_nv=P_nv, P_ne=P_ne, Q_delta_mom=Q_delta_mom, 
                                                E_emit=E_emit, K_ne=K_ne)
 
+        # save data if needed
+        save = self.saving & ((step % self.snapshot_period) == 0)
+        jax.lax.cond(save, self.save_state, lambda _: None, data)
+
         ### particle phase
         # assemble the partition
         P_particles = four_partition(data.R, data.L, self.particle_limit, self.pad_value)
-        internal_data = internal_data._replace(step=step, P_particles=P_particles)
+        internal_data = internal_data._replace(P_particles=P_particles)
 
         # scan over partition
         particle_scan_fn = lambda carry, I: self.particle_gibbs_step(carry[0], carry[1], I, carry[2])
