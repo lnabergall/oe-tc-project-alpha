@@ -55,7 +55,7 @@ def initialize_hdf5(data, config_name, time):
                              chunks=True, dtype=array.dtype)
 
 
-def save_state(data, config_name, time):
+def save_state(config_name, time, data):
     file_name = get_hdf5_filename(config_name, time)
     data_dict = extract_stored_data(data)
     with h5py.File(file_name, "a") as f:
