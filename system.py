@@ -136,7 +136,7 @@ class ParticleSystem:
 
     def save_state(self, data):
         args = (data, self.name, self.time)
-        jax.experimental.io_callback(save_state, args, args, ordered=True)
+        jax.experimental.io_callback(save_state, (), args, ordered=True)
 
     def initialize(self, key):
         key, key_positions, key_fields = jax.random.split(key, 3)
