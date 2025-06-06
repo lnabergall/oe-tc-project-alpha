@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import jax
@@ -19,7 +20,9 @@ def get_config_filename(config_name, time):
 def save_config(config):
     file_name = get_config_filename(config["name"], config["time"])
     config_info = {k: config[k] for k in ("name", "time", "seed")}
-    with open(file_name, "w") as f:
+    file = Path(file_name)
+    file.parent.mkdir(exist_ok=True, parents=True)
+    with file.open("w") as f:
         json.dump(config_info, f, indent=2)
 
 
