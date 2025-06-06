@@ -135,7 +135,7 @@ class ParticleSystem:
         return cls(*children, **aux_data)
 
     def save_state(self, data):
-        args = (data, self.config_name, self.time)
+        args = (data, self.name, self.time)
         jax.experimental.io_callback(save_state, args, args, ordered=True)
 
     def initialize(self, key):
