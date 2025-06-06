@@ -13,7 +13,7 @@ def get_foldername(config_name, time):
 
 
 def get_config_filename(config_name, time):
-    return generate_foldername(config_name, time) + "/config.json"
+    return get_foldername(config_name, time) + "/config.json"
 
 
 def save_config(config):
@@ -42,7 +42,7 @@ def extract_stored_data(data):
 
 
 def get_hdf5_filename(config_name, time):
-    return generate_foldername(config_name, time) + "/data.hdf5"
+    return get_foldername(config_name, time) + "/data.hdf5"
 
 
 def initialize_hdf5(data, config_name, time):
