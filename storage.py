@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +11,7 @@ from configs import CONFIGS
 
 
 def get_foldername(config_name, time):
-    return config_name + time.strftime("-%Y%m%d-%H%M%S%f")
+    return "data/" + config_name + time.strftime("-%Y%m%d-%H%M%S%f")
 
 
 def get_config_filename(config_name, time):
@@ -19,7 +20,8 @@ def get_config_filename(config_name, time):
 
 def save_config(config):
     file_name = get_config_filename(config["name"], config["time"])
-    config_info = {k: config[k] for k in ("name", "time", "seed")}
+    config_info = {k: config[k].strftime("%Y%m%d-%H%M%S%f") if k == "time" else config[k] 
+                   for k in ("name", "time", "seed")}
     file = Path(file_name)
     file.parent.mkdir(exist_ok=True, parents=True)
     with file.open("w") as f:
@@ -31,6 +33,7 @@ def load_config(config_name, time):
     with open(file_name, "r") as f:
         config_info = json.load(f)
 
+    config_info["time"] = datetime.strptime(config_info["time"], "%Y%m%d-%H%M%S%f")
     config = CONFIGS[config_info["name"]]
     config |= config_info
     return config
@@ -41,7 +44,7 @@ def get_fields():
 
 
 def extract_stored_data(data):
-    return {key: data[key] for key in get_fields()}
+    return {key: getattr(data, key) for key in get_fields()}
 
 
 def get_hdf5_filename(config_name, time):
