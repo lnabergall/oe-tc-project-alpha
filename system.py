@@ -108,7 +108,7 @@ class ParticleSystem:
 
     # logging and storage
     logging: bool                           # toggles optional logging
-    storing: bool                           # toggles data storage
+    saving: bool                            # toggles data storage
     snapshot_period: int                    # number of update steps between snapshots
 
     ### --- data fields with defaults ---
