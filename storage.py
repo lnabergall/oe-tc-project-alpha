@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import h5py
 
-from defaults import CONFIGS
+from configs import CONFIGS
 
 
 def get_foldername(config_name, time):
