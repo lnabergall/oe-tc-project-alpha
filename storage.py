@@ -75,6 +75,6 @@ def save_state(config_name, time, data):
 def load_states(config_name, time):
     file_name = get_hdf5_filename(config_name, time)
     with h5py.File(file_name, "r") as f:
-        states = tuple(f[field] for field in get_fields())
+        states = tuple(f[field][:] for field in get_fields())
 
     return states
