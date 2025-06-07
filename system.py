@@ -205,9 +205,9 @@ class ParticleSystem:
         data = data._replace(step=step, external_fields=external_fields, ef_idx=ef_idx)
 
         # get field and other precomputable data for current step
-        (external_field, net_field, P_v, 
+        (external_field, ef_idx, net_field, P_v, 
             P_nv, P_ne, Q_delta_mom, E_emit, K_ne) = self.particle_system_update_data(data)
-        data = data._replace(external_field=external_field, net_field=net_field)
+        data = data._replace(external_field=external_field, ef_idx=ef_idx, net_field=net_field)
         internal_data = internal_data._replace(P_v=P_v, P_nv=P_nv, P_ne=P_ne, Q_delta_mom=Q_delta_mom, 
                                                E_emit=E_emit, K_ne=K_ne)
 
@@ -242,9 +242,9 @@ class ParticleSystem:
         data = data._replace(bound_states=bound_states, masses=masses, coms=coms)
 
         # get field and other precomputable data for current step
-        (external_field, net_field, P_ne, P_nv_bs, 
+        (external_field, ef_idx, net_field, P_ne, P_nv_bs, 
             P_ne_bs, Q_delta_mom_bs) = self.boundstate_system_update_data(data)
-        data = data._replace(external_field=external_field, net_field=net_field, P=P_ne)
+        data = data._replace(external_field=external_field, ef_idx=ef_idx, net_field=net_field, P=P_ne)
         internal_data = internal_data._replace(
             P_nv_bs=P_nv_bs, P_ne_bs=P_ne_bs, Q_delta_mom_bs=Q_delta_mom_bs)
 
@@ -334,18 +334,18 @@ class ParticleSystem:
         P_v, P_nv, P_ne = jax.vmap(calculate_momentum_vectors, in_axes=(0, 0, 0, None, None))(
             data.P, net_field, self.Q, self.mu, self.gamma)
 
-        return external_field, net_field, P_v, P_nv, P_ne
+        return external_field, ef_idx + 1, net_field, P_v, P_nv, P_ne
 
     def particle_system_update_data(self, data):
         """Precomputable data needed for the particle update phase."""
-        external_field, net_field, P_v, P_nv, P_ne = self.system_update_data(data)
+        external_field, ef_idx, net_field, P_v, P_nv, P_ne = self.system_update_data(data)
         Q_delta_momentum, E_emit, K_ne = jax.vmap(
             calculate_kinetic_factors)(data.P, P_nv, P_ne, self.M)
 
-        return external_field, net_field, P_v, P_nv, P_ne, Q_delta_momentum, E_emit, K_ne
+        return external_field, ef_idx, net_field, P_v, P_nv, P_ne, Q_delta_momentum, E_emit, K_ne
 
     def boundstate_system_update_data(self, data):
-        external_field, net_field, _, P_nv, P_ne = self.system_update_data(data)
+        external_field, ef_idx, net_field, _, P_nv, P_ne = self.system_update_data(data)
 
         P_nv_bs = compute_group_sums(P_nv, data.bound_states)
         P_ne_bs = compute_group_sums(P_ne, data.bound_states)
@@ -353,7 +353,7 @@ class ParticleSystem:
         Q_delta_momentum_bs, _, _ = jax.vmap(calculate_partial_kinetic_factors)(
             P_nv_bs, P_ne_bs, 2 * data.masses)
 
-        return external_field, net_field, P_ne, P_nv_bs, P_ne_bs, Q_delta_momentum_bs
+        return external_field, ef_idx, net_field, P_ne, P_nv_bs, P_ne_bs, Q_delta_momentum_bs
 
     def gibbs_update_data(self, data, I):
         # candidate positions
