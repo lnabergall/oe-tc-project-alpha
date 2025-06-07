@@ -334,7 +334,7 @@ class ParticleSystem:
         P_v, P_nv, P_ne = jax.vmap(calculate_momentum_vectors, in_axes=(0, 0, 0, None, None))(
             data.P, net_field, self.Q, self.mu, self.gamma)
 
-        return external_field, ef_idx + 1, net_field, P_v, P_nv, P_ne
+        return external_field, data.ef_idx + 1, net_field, P_v, P_nv, P_ne
 
     def particle_system_update_data(self, data):
         """Precomputable data needed for the particle update phase."""
