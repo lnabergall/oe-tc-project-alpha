@@ -85,9 +85,11 @@ class ParticleSystem:
     mu: float                               # constant converting force to impulse or momentum
 
     # external drive 
+    drive: bool                             # toggles the external drive
     alpha: float                            # scale factor in Wien approximation to Planck's law
 
     # emission
+    emissions: bool                         # toggles all emission events
     epsilon: float                          # threshold constant of emission
     delta: float                            # range of emission events
 
@@ -198,16 +200,17 @@ class ParticleSystem:
         key, key_drive, key_particle, key_partition, key_boundstate = jax.random.split(key, 5)
 
         # generate new drive fields if needed
-        null_fn = lambda _: (data.external_fields, data.ef_idx)
-        fields_consumed = data.ef_idx >= data.external_fields.shape[0]
-        external_fields, ef_idx = jax.lax.cond(
-            fields_consumed, self.generate_external_drives, null_fn, key_drive)
-        data = data._replace(step=step, external_fields=external_fields, ef_idx=ef_idx)
+        if self.drive:
+            null_fn = lambda _: (data.external_fields, data.ef_idx)
+            fields_consumed = data.ef_idx >= data.external_fields.shape[0]
+            external_fields, ef_idx = jax.lax.cond(
+                fields_consumed, self.generate_external_drives, null_fn, key_drive)
+            data = data._replace(external_fields=external_fields, ef_idx=ef_idx)
 
         # get field and other precomputable data for current step
         (external_field, ef_idx, net_field, P_v, 
             P_nv, P_ne, Q_delta_mom, E_emit, K_ne) = self.particle_system_update_data(data)
-        data = data._replace(external_field=external_field, ef_idx=ef_idx, net_field=net_field)
+        data = data._replace(step=step, external_field=external_field, ef_idx=ef_idx, net_field=net_field)
         internal_data = internal_data._replace(P_v=P_v, P_nv=P_nv, P_ne=P_ne, Q_delta_mom=Q_delta_mom, 
                                                E_emit=E_emit, K_ne=K_ne)
 
@@ -263,9 +266,10 @@ class ParticleSystem:
         L = generate_lattice(data.R, self.n, self.pad_value)
         data = data._replace(L=L)
 
-        # reset and generate emission field, make optional
-        emission_field = self.generate_emissions(data, internal_data, emission_indicator)
-        data = data._replace(emission_field=emission_field)
+        # reset and generate emission field if needed
+        if self.emissions:
+            emission_field = self.generate_emissions(data, internal_data, emission_indicator)
+            data = data._replace(emission_field=emission_field)
 
         return data, internal_data, key 
 
@@ -319,15 +323,22 @@ class ParticleSystem:
 
     def generate_external_drives(self, key):
         """Generates external field values at the top of the lattice, plus the index of the starting set."""
-        num_samples = self.n * self.field_preloads
-        unmasked_samples = wien_approximation(key, self.beta, self.alpha, num_samples)
-        external_fields = jnp.reshape(unmasked_samples, (self.field_preloads, self.n))
+        if self.drive:
+            num_samples = self.n * self.field_preloads
+            unmasked_samples = wien_approximation(key, self.beta, self.alpha, num_samples)
+            external_fields = jnp.reshape(unmasked_samples, (self.field_preloads, self.n))
+        else:
+            external_fields = jnp.zeros((self.field_preloads, self.n))
+
         return external_fields, 0
 
     def system_update_data(self, data):
         """Precomputable data needed for both phases of the update process."""
         # fields
-        external_field = generate_drive_field(data.R, data.external_fields[data.ef_idx], masked, self.n)
+        if self.drive:
+            external_field = generate_drive_field(data.R, data.external_fields[data.ef_idx], masked, self.n)
+        else:
+            external_field = data.external_field
         net_field = external_field[data.R[:, 0], data.R[:, 1]] + data.emission_field
 
         # kinetic terms

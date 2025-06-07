@@ -22,20 +22,26 @@ def get_config():
     parser = argparse.ArgumentParser(description="Run a driven particle model.")
     parser.add_argument("--config")
     parser.add_argument("--steps")
-    parser.add_argument("--logging", action="store_true")
+    parser.add_argument("--no-emissions", action="store_true")
+    parser.add_argument("--no-drive", action="store_true")
     parser.add_argument("--saving", action="store_true")
     parser.add_argument("--snapshot_period")
-    parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--logging", action="store_true")
     parser.add_argument("--cpu", action="store_true")
+    parser.add_argument("--profile", action="store_true")
     parser.add_argument("--nojit", action="store_true")
     args = parser.parse_args()
+
     config = CONFIGS[args.config.lower()]
-    return (config, args.steps, args.logging, args.saving, 
-            args.snapshot_period, args.profile, args.cpu, args.nojit)
+    config["emissions"] = not args.no_emission
+    config["drive"] = not args.no_drive
+
+    return (config, args.steps, args.saving, args.snapshot_period, 
+            args.logging, args.cpu, args.profile, args.nojit)
 
 
 if __name__ == '__main__':
-    config, steps, logging, saving, snapshot_period, profiling, use_cpu, no_jit = get_config()
+    config, steps, saving, snapshot_period, logging, use_cpu, profiling, no_jit = get_config()
     if use_cpu:
         device = jax.devices("cpu")[0]
         jax.config.update("jax_default_device", device)
