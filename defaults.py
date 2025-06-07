@@ -33,7 +33,7 @@ def get_config():
     args = parser.parse_args()
 
     config = CONFIGS[args.config.lower()]
-    config["emissions"] = not args.no_emission
+    config["emissions"] = not args.no_emissions
     config["drive"] = not args.no_drive
 
     return (config, args.steps, args.saving, args.snapshot_period, 
