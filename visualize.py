@@ -10,21 +10,21 @@ from system import ParticleSystem as System
 def generate_movie(states, system, frame_interval):
     fig, ax = plt.subplots()
     scat = ax.scatter([], [], s=40, c=[], cmap="coolwarm", vmin=-1, vmax=1)
-    ax.set_xlim(0, n)
-    ax.set_ylim(0, n)
+    ax.set_xlim(0, system.n)
+    ax.set_ylim(0, system.n)
     ax.set_aspect("equal")
     ax.set_title("particle system")
 
     def init():
-        scat.set_offsets([])
-        scat.set_array([])
-        return scat
+        scat.set_offsets(np.empty((0, 2)))
+        scat.set_array(np.empty((0,)))
+        return (scat,)
 
     def update(frame):
         positions = states.R[frame]
         scat.set_offsets(positions)
         scat.set_array(system.Q)
-        return scat
+        return (scat,)
 
     ani = animation.FuncAnimation(
         fig, update, frames=states.step.size, init_func=init, blit=True, interval=frame_interval)
