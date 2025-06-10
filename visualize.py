@@ -8,8 +8,8 @@ from system import ParticleSystem as System
 
 
 def generate_movie(states, system, frame_interval):
-    fig, ax = plt.subplots()
-    scat = ax.scatter([], [], s=40, c=[], cmap="coolwarm", vmin=-1, vmax=1)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    scat = ax.scatter([], [], s=10, c=[], cmap="coolwarm", vmin=-1, vmax=1)
     ax.set_xlim(0, system.n)
     ax.set_ylim(0, system.n)
     ax.set_aspect("equal")
@@ -33,7 +33,8 @@ def generate_movie(states, system, frame_interval):
 
 def save_movie(ani, config_name, time, frame_interval):
     file_name = get_foldername(config_name, time) + "/movie.mp4"
-    ani.save(file_name, fps=1000//frame_interval, extra_args=["-vcodec", "libx264"])
+    Writer = animation.FFMpegWriter
+    ani.save(file_name, writer=Writer(fps=1000//frame_interval, bitrate=8000), dpi=300)
 
 
 def create_movie(config_name, time, frame_interval=200):
