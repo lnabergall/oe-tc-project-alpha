@@ -268,7 +268,7 @@ def calculate_kinetic_factors(p, p_nv, p_ne, m):
 def calculate_heat_released(p_ne, e, Q_delta_mom, U, U_e, mu):
     e = e.astype(p_ne.dtype)
     Q_delta_pot = U_e - U
-    Q_delta = Q_delta_mom + (mu * jnp.dot(p_ne, e)) - Q_delta_pot
+    Q_delta = Q_delta_mom + (jnp.dot(p_ne, e) / mu) - Q_delta_pot
     return Q_delta
 
 

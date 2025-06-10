@@ -165,4 +165,31 @@ CONFIGS = {
 
         "field_preloads": 10,
     },
+    "base_1gamma_tiny": {
+        "name": "base_1gamma_tiny",
+        "n": 12,    # multiple of 4
+        "k": 12,
+        "t": 2,
+        "N": jnp.array((9, 3)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 16.0,
+        "gamma": 1.0,
+
+        "mu": 1.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": 24,
+        "emission_streams": 3,
+        "boundstate_streams": 3,
+        "particle_limit": 6,
+        "boundstate_limit": 6,
+
+        "field_preloads": 100,
+    },
 }
