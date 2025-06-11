@@ -35,6 +35,9 @@ class InternalData(NamedTuple):
     P_ne_bs: jax.Array = None                   # Updated net molecule momenta without emissions. 2D, kx2.
     Q_delta_mom_bs: jax.Array = None            # Pure molecule momentum terms for the heat released. 1D, k.
 
+    # bound state helping data
+    no_move: jax.Array = None                   # Recent particle movement indicator. 1D, k.
+
 
 class SystemData(NamedTuple):
     # context
@@ -223,6 +226,9 @@ class ParticleSystem:
         P_particles = four_partition(data.R, data.L, self.particle_limit, self.pad_value)
         internal_data = internal_data._replace(P_particles=P_particles)
 
+        if self.logging:
+            jax.debug.print("R pre-particle: {}", data.R)
+
         # scan over partition
         particle_scan_fn = lambda carry, I: self.particle_gibbs_step(carry[0], carry[1], I, carry[2])
         (data, internal_data, _), particle_step_info = jax.lax.scan(
@@ -232,8 +238,9 @@ class ParticleSystem:
         compactify_fn = lambda V: compactify_partition(P_particles, V, self.k)
         (logdensities, probabilities, emission_indicator, U_Inbhd, is_bound, no_move) = jax.tree.map(
             compactify_fn, particle_step_info)
+        no_move = internal_data.no_move & no_move
         internal_data = internal_data._replace(logdensities=logdensities, probabilities=probabilities, 
-                                               emission_indicator=emission_indicator)
+                                               emission_indicator=emission_indicator, no_move=no_move)
         
         # update lattice
         L = generate_lattice(data.R, self.n, self.pad_value)
@@ -255,12 +262,21 @@ class ParticleSystem:
         C_boundstates = four_group_partition(data.bound_states, data.L, key_partition, 
                                              self.boundstate_limit, self.pad_value)
 
+        R_previous = data.R
+
+        if self.logging:
+            jax.debug.print("bound states: {}", data.bound_states)
+            jax.debug.print("R pre-boundstate: {}", R_previous)
+
         # while loop over coloring
         C_bs_safe = replace(C_boundstates, self.pad_value, -1)
         cond_fn = lambda args: args[2] <= jnp.max(C_bs_safe)
         boundstate_loop_fn = lambda args: self.boundstate_gibbs_step(*args)
         data, internal_data, _, _, _ = jax.lax.while_loop(
             cond_fn, boundstate_loop_fn, (data, internal_data, 0, C_boundstates, key))
+
+        no_move = data.R == R_previous
+        internal_data = internal_data._replace(no_move=no_move)
 
         # update lattice
         L = generate_lattice(data.R, self.n, self.pad_value)
@@ -317,7 +333,7 @@ class ParticleSystem:
         new_shifts = get_shifts()[next_indices]
         coms_new = data.coms.at[I].add(new_shifts.astype(float), mode="drop")
         R = move(data.R, data.coms, coms_new, self.n)
-        data = data._replace(R=R)
+        data = data._replace(R=R, coms=coms_new)
 
         return data, internal_data, step + 1, C_boundstates, key 
 
@@ -459,3 +475,5 @@ class ParticleSystem:
         coms, masses = centers_of_mass(data.R, self.M, bound_states)
 
         return bound_states, masses, coms
+
+### NEED TO ACCOUNT FOR ALL MOVEMENT, INCLUDING DURING BOUND STATE PHASE
