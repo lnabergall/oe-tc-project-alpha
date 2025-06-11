@@ -179,7 +179,8 @@ class ParticleSystem:
             P_particles=_8m_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
             emission_indicator=k_zeros_bool, P_v=k2_zeros_float, P_nv=k2_zeros_float, 
             P_ne=k2_zeros_float, Q_delta_mom=k_zeros_float, E_emit=k_zeros_float, K_ne=k_zeros_float, 
-            P_nv_bs=k2_zeros_float, P_ne_bs=k2_zeros_float, Q_delta_mom_bs=k_zeros_float)
+            P_nv_bs=k2_zeros_float, P_ne_bs=k2_zeros_float, Q_delta_mom_bs=k_zeros_float, 
+            no_move=k_zeros_bool)
 
         return data, internal_data
 
@@ -275,7 +276,7 @@ class ParticleSystem:
         data, internal_data, _, _, _ = jax.lax.while_loop(
             cond_fn, boundstate_loop_fn, (data, internal_data, 0, C_boundstates, key))
 
-        no_move = data.R == R_previous
+        no_move = jnp.all(data.R == R_previous, axis=-1)
         internal_data = internal_data._replace(no_move=no_move)
 
         # update lattice
@@ -475,5 +476,3 @@ class ParticleSystem:
         coms, masses = centers_of_mass(data.R, self.M, bound_states)
 
         return bound_states, masses, coms
-
-### NEED TO ACCOUNT FOR ALL MOVEMENT, INCLUDING DURING BOUND STATE PHASE
