@@ -62,9 +62,10 @@ def neighborhood_potential_energies_dynamic(I, nbhd_I, Q, R, indices, n, buffer_
             nbhd_I_slice, Q_Is, R_test, Q, n, pad_value).T
 
         # update the carry
-        U_nbhd.at[slice_].add(U_nbhd_slice + jnp.nan_to_num(nbhd_occupation * jnp.inf, posinf=jnp.inf))
-        remaining = remaining.at[slice_].set(False)
-        slice_ = jnp.extract(remaining, I, size=buffer_size, fill_value=pad_value)
+        U_nbhd = U_nbhd.at[slice_].add(
+            U_nbhd_slice + jnp.nan_to_num(nbhd_occupation * jnp.inf, posinf=jnp.inf))
+        remaining = remaining.at[slice_].set(False, mode="drop")
+        slice_ = jnp.extract(remaining, indices, size=buffer_size, fill_value=pad_value)
         return U_nbhd, slice_, remaining
 
     U_nbhd = jax.lax.while_loop(cond_fn, potential_fn, (U_nbhd, slice_, remaining))[0]

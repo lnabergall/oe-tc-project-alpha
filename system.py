@@ -366,16 +366,6 @@ class ParticleSystem:
 
         return external_field, ef_idx, net_field, P_ne, P_nv_bs, P_ne_bs, Q_delta_momentum_bs
 
-    def gibbs_update_data(self, data, I):
-        # candidate positions
-        R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
-            data.R[I], self.n, self.pad_value)
-
-        U_Inbhd = neighborhood_potential_energies(
-            I, R_Inbhd, self.Q, data.R, self.n, self.pad_value)
-
-        return R_Inbhd, U_Inbhd
-
     def particle_gibbs_update_data(self, data, I, K_ne):
         """Multi-particle data needed for a single particle-phase Gibbs update step."""
         R_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
