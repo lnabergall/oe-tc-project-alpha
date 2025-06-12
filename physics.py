@@ -40,6 +40,7 @@ def neighborhood_potential_energies(I, nbhd_I, Q, R, n, pad_value):
 
 @partial(jax.jit, static_argnums=[5, 6, 7])
 def neighborhood_potential_energies_dynamic(I, nbhd_I, Q, R, indices, n, buffer_size, pad_value):
+    R_test = R.at[I].set(pad_value)
     remaining = I != pad_value
     slice_ = jnp.extract(remaining, indices, size=buffer_size, fill_value=pad_value)
     U_nbhd = jnp.zeros(nbhd_I.shape[:2])
@@ -53,7 +54,6 @@ def neighborhood_potential_energies_dynamic(I, nbhd_I, Q, R, indices, n, buffer_
         I_slice = I[slice_]
         nbhd_I_slice = nbhd_I[slice_]
         Q_Is = Q[I_slice]
-        R_test = R.at[I_slice].set(pad_value)
 
         # for pauli exclusion
         nbhd_occupation = occupied_neighbors(nbhd_I_slice, R_test, n, pad_value)
