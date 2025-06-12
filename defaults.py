@@ -8,6 +8,7 @@ import jax.numpy as jnp
 
 from system import ParticleSystem as System
 from log import setup_logging, jax_log_info
+from visualize import create_movie
 from storage import *
 
 
@@ -26,6 +27,7 @@ def get_config():
     parser.add_argument("--no-drive", action="store_true")
     parser.add_argument("--saving", action="store_true")
     parser.add_argument("--snapshot_period")
+    parser.add_argument("--make-movie", action="store_true")
     parser.add_argument("--logging", action="store_true")
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--profile", action="store_true")
@@ -36,12 +38,12 @@ def get_config():
     config["emissions"] = not args.no_emissions
     config["drive"] = not args.no_drive
 
-    return (config, args.steps, args.saving, args.snapshot_period, 
+    return (config, args.steps, args.saving, args.snapshot_period, args.make_movie,
             args.logging, args.cpu, args.profile, args.nojit)
 
 
 if __name__ == '__main__':
-    config, steps, saving, snapshot_period, logging, use_cpu, profiling, no_jit = get_config()
+    config, steps, saving, snapshot_period, make_movie, logging, use_cpu, profiling, no_jit = get_config()
     if use_cpu:
         device = jax.devices("cpu")[0]
         jax.config.update("jax_default_device", device)
@@ -74,3 +76,8 @@ if __name__ == '__main__':
 
     if profiling:
         jax.profiler.stop_trace()
+
+    if make_movie:
+        jax_log_info("Making movie...")
+        create_movie(particle_system.name, particle_system.time)
+        jax_log_info("Movie created.")
