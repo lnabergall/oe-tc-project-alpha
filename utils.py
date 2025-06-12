@@ -166,11 +166,13 @@ def bfs(edges, i, pad_value):
 
         neighbors = edges[current]
 
-        # mark newly visited neighbors 
+        # indicate unvisited neighbors
+        valid = (neighbors != pad_value) & (~visited[neighbors])
+
+        # mark neighbors as visited pre-emptively for efficiency
         visited = visited.at[neighbors].set(True, mode="drop")
 
-        # add them to queue and update tail
-        valid = (neighbors != pad_value) & (~visited[neighbors])
+        # add unvisted neighbors to queue and update tail
         num_valid = jnp.sum(valid)
         unvisited = jnp.extract(valid, neighbors, size=d, fill_value=pad_value)
         queue = queue.at[d_range + tail].set(unvisited, mode="drop")
