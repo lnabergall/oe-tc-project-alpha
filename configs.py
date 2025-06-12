@@ -165,8 +165,8 @@ CONFIGS = {
 
         "field_preloads": 10,
     },
-    "base_1gamma_tiny": {
-        "name": "base_1gamma_tiny",
+    "cold_1gamma_tiny": {
+        "name": "cold_1gamma_tiny",
         "n": 12,    # multiple of 4
         "k": 12,
         "t": 2,
@@ -192,8 +192,8 @@ CONFIGS = {
 
         "field_preloads": 100,
     },
-    "base_1gamma_medium": {
-        "name": "base_1gamma_medium",
+    "cold_1gamma_medium": {
+        "name": "cold_1gamma_medium",
         "n": 100,    # multiple of 4
         "k": 500,
         "t": 2,
@@ -219,8 +219,8 @@ CONFIGS = {
 
         "field_preloads": 100,
     },
-    "base_1gamma_large": {
-        "name": "base_1gamma_large",
+    "cold_1gamma_large": {
+        "name": "cold_1gamma_large",
         "n": 248,    # multiple of 4
         "k": 2500,
         "t": 2,
@@ -229,6 +229,87 @@ CONFIGS = {
         "T_Q": jnp.array((-1, 1)),
 
         "beta": 16.0,
+        "gamma": 1.0,
+
+        "mu": 1.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": 5000,
+        "emission_streams": 100,
+        "boundstate_streams": 100,
+        "particle_limit": 500,
+        "boundstate_limit": 800,
+
+        "field_preloads": 100,
+    },
+    "warm_1gamma_tiny": {
+        "name": "warm_1gamma_tiny",
+        "n": 12,    # multiple of 4
+        "k": 12,
+        "t": 2,
+        "N": jnp.array((9, 3)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 4.0,
+        "gamma": 1.0,
+
+        "mu": 1.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": 24,
+        "emission_streams": 3,
+        "boundstate_streams": 3,
+        "particle_limit": 6,
+        "boundstate_limit": 6,
+
+        "field_preloads": 100,
+    },
+    "warm_1gamma_medium": {
+        "name": "warm_1gamma_medium",
+        "n": 100,    # multiple of 4
+        "k": 500,
+        "t": 2,
+        "N": jnp.array((400, 100)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 4.0,
+        "gamma": 1.0,
+
+        "mu": 1.0,
+
+        "alpha": 1.0,
+
+        "epsilon": 1.0,
+        "delta": 2,
+
+        "pad_value": 1000,
+        "emission_streams": 20,
+        "boundstate_streams": 20,
+        "particle_limit": 120,
+        "boundstate_limit": 160,
+
+        "field_preloads": 100,
+    },
+    "warm_1gamma_large": {
+        "name": "warm_1gamma_large",
+        "n": 248,    # multiple of 4
+        "k": 2500,
+        "t": 2,
+        "N": jnp.array((2000, 500)),
+        "T_M": jnp.array((1, 2)),
+        "T_Q": jnp.array((-1, 1)),
+
+        "beta": 4.0,
         "gamma": 1.0,
 
         "mu": 1.0,
