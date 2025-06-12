@@ -163,9 +163,9 @@ def centers_of_mass(R, M, bound_states):
     return centers, mass_sums
 
 
-def move(R, coms_curr, coms_new, n):
+def move(R, shifts, n):
     """Move each particle using reference points. Should be a valid lattice translation."""
-    return cylindrical_coordinates(R + (coms_new - coms_curr).astype(int), n)
+    return cylindrical_coordinates(R + shifts, n)
 
 
 @partial(jax.jit, static_argnums=[1, 2, 3, 4, 5, 6])

@@ -110,6 +110,19 @@ def get_classes_by_id(I, A, pad_value):
     return jnp.nonzero(jnp.isin(A, I), size=k, fill_value=pad_value)[0]
 
 
+def get_class_indices(I, A, pad_value):
+    """
+    Given a colouring A and a pad_value-padded subset I of colors,
+    returns, for each label of A, the row index in I or pad_value if the label is not in I.
+    """
+    def collection_fn(i):
+        idx = jnp.argmax(I == i)
+        return jnp.where(I[idx] == i, idx, pad_value)
+
+    indices = jax.vmap(collection_fn)(A)
+    return indices
+
+
 def get_id_normalizer(A, pad_value):
     """
     Given a colouring A on not necessarily consecutive colors up to the size of A, 

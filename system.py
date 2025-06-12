@@ -323,7 +323,7 @@ class ParticleSystem:
         I = jnp.nonzero(C_boundstates == step, size=self.boundstate_limit, fill_value=self.pad_value)[0]
         I_particles = get_classes_by_id(I, data.bound_states, self.pad_value)
 
-        com_Inbhd, boundary_mask, U_Inbhd, U_I = self.boundstate_gibbs_update_data(data, I, I_particles)
+        boundary_mask, U_Inbhd, U_I = self.boundstate_gibbs_update_data(data, I, I_particles)
         P_ne = internal_data.P_ne_bs[I]
         
         probabilities, logdensities = calculate_probabilities(
@@ -332,9 +332,10 @@ class ParticleSystem:
 
         # update states and data
         new_shifts = get_shifts()[next_indices]
-        coms_new = data.coms.at[I].add(new_shifts.astype(float), mode="drop")
-        R = move(data.R, data.coms, coms_new, self.n)
-        data = data._replace(R=R, coms=coms_new)
+        bs_indices = get_class_indices(I, data.bound_states, self.pad_value)
+        new_shifts = new_shifts.at[bs_indices].get(mode="fill", fill_value=0)
+        R = move(data.R, new_shifts, self.n)
+        data = data._replace(R=R)
 
         return data, internal_data, step + 1, C_boundstates, key 
 
@@ -411,17 +412,13 @@ class ParticleSystem:
                                         data.bound_states, I, self.pad_value)
         U_I = U_Inbhd[:, 0]
 
-        # candidate centers of mass
-        com_Inbhd = jax.vmap(generate_neighborhood, in_axes=(0, None, None))(
-            data.coms[I], self.n, self.pad_value)
-
         # boundary mask
         out_by_molecule = compute_subgroup_sums(
             (R_Inbhd_particles == self.pad_value).astype(int), I_particles, 
             data.bound_states, I, self.pad_value)
         boundary_mask = ~out_by_molecule[:, :, 1].astype(bool)
 
-        return com_Inbhd, boundary_mask, U_Inbhd, U_I
+        return boundary_mask, U_Inbhd, U_I
 
     def generate_emissions(self, data, internal_data, emission_indicator):
         I = jnp.extract(emission_indicator, self.I, size=self.emission_streams, fill_value=self.pad_value)
