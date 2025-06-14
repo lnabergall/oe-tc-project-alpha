@@ -63,7 +63,6 @@ def plot_statistics(states, stat_names, folder_name, show_plot):
 
 
 def produce_graphics(config_name, time, frame_interval=200, show_plot=False):
-    time = string_to_datetime(time)
     folder_name = get_foldername(config_name, time)
     states = load_states(config_name, time)
     stat_names = ("E_total, U_total, K_total")

@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from system import ParticleSystem as System
 from log import setup_logging, jax_log_info
-from visualize import create_movie
+from visualize import produce_graphics
 from storage import *
 
 
