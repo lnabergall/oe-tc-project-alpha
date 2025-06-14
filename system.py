@@ -60,6 +60,14 @@ class SystemData(NamedTuple):
     masses: jax.Array = None                # mass of each bound state. 1D, k, 0-padded.
     coms: jax.Array = None                  # center of mass of each bound state. 2D, kx2, 0-padded.
 
+    # energy
+    U: jax.Array = None                     # particle potential energies. 1D, k.
+    K: jax.Array = None                     # particle kinetic energies. 1D, k.
+    E: jax.Array = None                     # particle energies. 1D, k.
+    U_total: jax.Array = None               # total potential energy of the particle system. Scalar.
+    K_total: jax.Array = None               # total kinetic energy of the particle system. Scalar.
+    E_total: jax.Array = None               # total energy of the particle system. Scalar.
+
 
 def assign_properties(t, k, N, T_M, T_Q):
     I = jnp.arange(k)
@@ -211,10 +219,20 @@ class ParticleSystem:
                 fields_consumed, self.generate_external_drives, null_fn, key_drive)
             data = data._replace(external_fields=external_fields, ef_idx=ef_idx)
 
+        # extra evaluation data
+        LQ = generate_property_lattice(data.L, self.Q, self.pad_value)
+        U = compute_potential_energies(data.R, self.Q, LQ, pad_value)
+        K = compute_kinetic_energies(data.P, self.M)
+        E = compute_energies(U, K)
+        U_total, K_total = jnp.sum(U), jnp.sum(K)
+        E_total = compute_energies(U_total, K_total)
+
         # get field and other precomputable data for current step
         (external_field, ef_idx, net_field, P_v, 
             P_nv, P_ne, Q_delta_mom, E_emit, K_ne) = self.particle_system_update_data(data)
-        data = data._replace(step=step, external_field=external_field, ef_idx=ef_idx, net_field=net_field)
+        data = data._replace(step=step, external_field=external_field, ef_idx=ef_idx, 
+                             net_field=net_field, U=U, K=K, E=E, U_total=U_total, 
+                             K_total=K_total, E_total=E_total)
         internal_data = internal_data._replace(P_v=P_v, P_nv=P_nv, P_ne=P_ne, Q_delta_mom=Q_delta_mom, 
                                                E_emit=E_emit, K_ne=K_ne)
 
@@ -228,6 +246,7 @@ class ParticleSystem:
         internal_data = internal_data._replace(P_particles=P_particles)
 
         if self.logging:
+            jax.debug.print("E_total: {}", E_total)
             jax.debug.print("R pre-particle: {}", data.R)
 
         # scan over partition
@@ -394,7 +413,7 @@ class ParticleSystem:
         U_I = U_Inbhd[:, 0]
         
         # bound state containment
-        E_I = U_I + K_ne
+        E_I = compute_energies(U_I, K_ne)
         is_bound = bound(E_I)
 
         return R_Inbhd, U_Inbhd, U_I, is_bound

@@ -31,17 +31,42 @@ def generate_movie(states, system, frame_interval):
     return ani
 
 
-def save_movie(ani, config_name, time, frame_interval):
-    file_name = get_foldername(config_name, time) + "/movie.mp4"
+def save_movie(ani, folder_name, frame_interval):
+    file_name = folder_name + "/movie.mp4"
     Writer = animation.FFMpegWriter
     ani.save(file_name, writer=Writer(fps=1000//frame_interval, bitrate=8000), dpi=300)
 
 
-def create_movie(config_name, time, frame_interval=200):
-    time = string_to_datetime(time)
+def create_movie(states, config_name, time, folder_name, frame_interval):
     config = load_config(config_name, time)
     system = System(**config)
-    states = load_states(config_name, time)
     ani = generate_movie(states, system, frame_interval)
-    save_movie(ani, config_name, time, frame_interval)
-    plt.show()
+    save_movie(ani, folder_name, frame_interval)
+
+
+def plot_statistics(states, stat_names, folder_name, show_plot):
+    file_name = folder_name + "/" + stat_names[0] + ".png"
+    statistics = {name: getattr(states, name) for name in stat_names}
+
+    plt.figure(figsize=(10, 4))
+    for name, values in statistics.items():
+        plt.plot(states.step, values, label=name)
+    plt.xlabel("step")
+    plt.ylabel("value")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+
+    plt.savefig(file_name, dpi=300)
+    if show_plot:
+        plt.show()
+
+
+def produce_graphics(config_name, time, frame_interval=200, show_plot=False):
+    time = string_to_datetime(time)
+    folder_name = get_foldername(config_name, time)
+    states = load_states(config_name, time)
+    stat_names = ("E_total, U_total, K_total")
+
+    create_movie(states, config_name, time, folder_name, frame_interval)
+    plot_statistics(states, stat_names, folder_name, show_plot)
