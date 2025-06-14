@@ -155,9 +155,12 @@ class ParticleSystem:
         key, key_positions, key_fields = jax.random.split(key, 3)
 
         # data placeholders
+        k_zeros_float = jnp.zeros((self.k,), dtype=float)
+        k_zeros_int = jnp.zeros((self.k,), dtype=int)
         k2_zeros_float = jnp.zeros((self.k, 2), dtype=float)
         k_zeros_bool = jnp.zeros((self.k,), dtype=bool)
-        scalar = jnp.float32(0)
+        scalar_float = jnp.float32(0)
+        scalar_int = jnp.int32(0)
         bound_states_default = jnp.arange(self.k)
 
         R = sample_lattice_points(key_positions, self.n, self.k, replace=False)
@@ -170,9 +173,9 @@ class ParticleSystem:
 
         data = SystemData(step=0, R=R, L=L, P=k2_zeros_float, external_fields=external_fields, 
                           ef_idx=ef_idx, external_field=external_field, emission_field=emission_field,
-                          net_field=net_field, bound_states=bound_states_default, U=k_zeros_float, 
-                          K=k_zeros_float, E=k_zeros_float, U_total=scalar, K_total=scalar, 
-                          E_total=scalar)
+                          net_field=net_field, bound_states=bound_states_default, U=k_zeros_int, 
+                          K=k_zeros_float, E=k_zeros_float, U_total=scalar_int, K_total=scalar_float, 
+                          E_total=scalar_float)
 
         if self.saving:
             initialize_hdf5(data, self.name, self.time)
@@ -182,7 +185,6 @@ class ParticleSystem:
         data = data._replace(bound_states=bound_states, masses=masses, coms=coms)
 
         # internal data placeholders
-        k_zeros_float = jnp.zeros((self.k,), dtype=float)
         k5_zeros_float = jnp.zeros((self.k, 5), dtype=float)
         _8m_padding = jnp.full((8, self.particle_limit), self.pad_value)
 
