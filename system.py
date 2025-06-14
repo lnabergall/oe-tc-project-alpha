@@ -157,6 +157,7 @@ class ParticleSystem:
         # data placeholders
         k2_zeros_float = jnp.zeros((self.k, 2), dtype=float)
         k_zeros_bool = jnp.zeros((self.k,), dtype=bool)
+        scalar = jnp.float32(0)
         bound_states_default = jnp.arange(self.k)
 
         R = sample_lattice_points(key_positions, self.n, self.k, replace=False)
@@ -169,7 +170,9 @@ class ParticleSystem:
 
         data = SystemData(step=0, R=R, L=L, P=k2_zeros_float, external_fields=external_fields, 
                           ef_idx=ef_idx, external_field=external_field, emission_field=emission_field,
-                          net_field=net_field, bound_states=bound_states_default)
+                          net_field=net_field, bound_states=bound_states_default, U=k_zeros_float, 
+                          K=k_zeros_float, E=k_zeros_float, U_total=scalar, K_total=scalar, 
+                          E_total=scalar)
 
         if self.saving:
             initialize_hdf5(data, self.name, self.time)
@@ -221,7 +224,7 @@ class ParticleSystem:
 
         # extra evaluation data
         LQ = generate_property_lattice(data.L, self.Q, self.pad_value)
-        U = compute_potential_energies(data.R, self.Q, LQ, pad_value)
+        U = compute_potential_energies(data.R, self.Q, LQ, self.pad_value)
         K = compute_kinetic_energies(data.P, self.M)
         E = compute_energies(U, K)
         U_total, K_total = jnp.sum(U), jnp.sum(K)

@@ -106,7 +106,7 @@ def potential(r, LQ, pad_value):
     pad_value
         Scalar.
     """
-    V_nbhd = test_potential_factors(r, LQ, pad_value)
+    V_nbhd = potential_factors(r, LQ, pad_value)
     V = jnp.sum(V_nbhd)
     return V
 
@@ -118,7 +118,7 @@ def potential_energy(V, q):
 def make_potential_energy_func(LQ, pad_value):
 
     def func(r, q):
-        V = test_potential(r, LQ, pad_value)
+        V = potential(r, LQ, pad_value)
         U = potential_energy(V, q)
         return U
 
