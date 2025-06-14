@@ -45,7 +45,7 @@ def create_movie(states, config_name, time, folder_name, frame_interval):
 
 
 def plot_statistics(states, stat_names, folder_name, show_plot):
-    file_name = folder_name + "/" + stat_names[0] + ".png"
+    file_name = folder_name + "/" + "statistics_plot.png"
     statistics = {name: getattr(states, name) for name in stat_names}
 
     plt.figure(figsize=(10, 4))
@@ -65,7 +65,7 @@ def plot_statistics(states, stat_names, folder_name, show_plot):
 def produce_graphics(config_name, time, frame_interval=200, show_plot=False):
     folder_name = get_foldername(config_name, time)
     states = load_states(config_name, time)
-    stat_names = ("E_total, U_total, K_total")
+    stat_names = ("E_total", "U_total", "K_total")
 
     create_movie(states, config_name, time, folder_name, frame_interval)
     plot_statistics(states, stat_names, folder_name, show_plot)
