@@ -230,8 +230,16 @@ def move(R, shifts, n):
     return cylindrical_coordinates(R + shifts, n)
 
 
-@partial(jax.jit, static_argnums=[1, 2, 3, 4, 5, 6])
-def planck(key, beta, alpha, delta, theta, M, num_samples):
+def planck_logdensity_fn(F, alpha, delta):
+    return jnp.log(alpha) + (jnp.log(F) * 3) - jnp.log(jnp.exp(delta * F) - 1)
+
+
+def gamma_logdensity_fn(x, a, theta):
+    return jnp.log(x)*(a - 1) - (x / theta)
+
+
+@partial(jax.jit, static_argnums=[1, 2, 3, 4, 5])
+def planck(key, alpha, delta, theta, M, num_samples):
     keys = jax.random.split(key, num=num_samples)
 
     @jax.jit
@@ -248,7 +256,7 @@ def planck(key, beta, alpha, delta, theta, M, num_samples):
         def reject_fn(data):
             key, F = data
             key, subkey = jax.random.split(key)
-            planck_logdensity = planck_logdensity_fn(F, beta, alpha, delta)
+            planck_logdensity = planck_logdensity_fn(F, alpha, delta)
             gamma_logdensity = gamma_logdensity_fn(F, 4, theta)
             accept_ratio = jnp.exp(planck_logdensity - jnp.log(M) - gamma_logdensity)
             u = jax.random.uniform(subkey)
@@ -262,13 +270,13 @@ def planck(key, beta, alpha, delta, theta, M, num_samples):
     return samples
 
 
-@partial(jax.jit, static_argnums=[1, 2, 3])
-def wien_approximation(key, beta, alpha, num_samples):
+@partial(jax.jit, static_argnums=[1, 2])
+def wien_approximation(key, alpha, num_samples):
     keys = jax.random.split(key, num=num_samples)
 
     @jax.jit
     def sample_fn(key):
-        return jnp.exp(jax.random.loggamma(key, 4) - jnp.log(alpha) - jnp.log(beta))
+        return jnp.exp(jax.random.loggamma(key, 4) - jnp.log(alpha))
 
     samples = jax.vmap(sample_fn)(keys)
     return samples

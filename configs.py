@@ -1,384 +1,72 @@
+import math
+
 import jax
 import jax.numpy as jnp
 
 
-CONFIGS = {
-    "toy_tiny": {
-        "name": "toy_tiny",
-        "n": 12,    # multiple of 4
-        "k": 12,
-        "t": 2,
-        "N": jnp.array((9, 3)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
+PARAMS = {
+    "d": [5, 10, 20, 40, 80, 160],
+    "k": [12, 100, 500, 2500, 10000, 25000],
+    "r_N": [1, 2, 3, 4, 5, 6, 8],    # number ratio
 
-        "beta": 1.0,
-        "gamma": 1.0,
+    "beta": [1.0, 2.0, 4.0, 8.0, 16.0, 32.0],
+    "gamma": [0.0, 0.001, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0],
 
-        "mu": 1.0,
+    "mu": [1.0],
 
-        "alpha": 1.0,
+    "alpha": [5.0, 10.0, 20.0, 40.0, 80.0, 160.0],
 
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 24,
-        "emission_streams": 3,
-        "boundstate_streams": 3,
-        "particle_limit": 6,
-        "boundstate_limit": 6,
-
-        "field_preloads": 10,
-    },
-    "toy_small": {
-        "name": "toy_small",
-        "n": 40,    # multiple of 4
-        "k": 100,
-        "t": 2,
-        "N": jnp.array((80, 20)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 1.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 200,
-        "emission_streams": 5,
-        "boundstate_streams": 5,
-        "particle_limit": 30,
-        "boundstate_limit": 40,
-
-        "field_preloads": 10,
-    },
-    "toy_medium": {
-        "name": "toy_medium",
-        "n": 100,    # multiple of 4
-        "k": 500,
-        "t": 2,
-        "N": jnp.array((400, 100)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 1.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 1000,
-        "emission_streams": 20,
-        "boundstate_streams": 20,
-        "particle_limit": 120,
-        "boundstate_limit": 160,
-
-        "field_preloads": 10,
-    },
-    "toy_large": {
-        "name": "toy_large",
-        "n": 248,    # multiple of 4
-        "k": 2500,
-        "t": 2,
-        "N": jnp.array((2000, 500)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 1.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 5000,
-        "emission_streams": 100,
-        "boundstate_streams": 100,
-        "particle_limit": 500,
-        "boundstate_limit": 800,
-
-        "field_preloads": 10,
-    },
-    "toy_huge": {
-        "name": "toy_huge",
-        "n": 500,    # multiple of 4
-        "k": 10000,
-        "t": 2,
-        "N": jnp.array((8000, 2000)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 1.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 20000,
-        "emission_streams": 300,
-        "boundstate_streams": 300,
-        "particle_limit": 1800,
-        "boundstate_limit": 3000,
-
-        "field_preloads": 10,
-    },
-    "toy_massive": {
-        "name": "toy_massive",
-        "n": 800,    # multiple of 4
-        "k": 25000,
-        "t": 2,
-        "N": jnp.array((20000, 5000)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 1.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 50000,
-        "emission_streams": 600,
-        "boundstate_streams": 600,
-        "particle_limit": 4000,
-        "boundstate_limit": 6000,
-
-        "field_preloads": 10,
-    },
-    "cold_1gamma_tiny": {
-        "name": "cold_1gamma_tiny",
-        "n": 12,    # multiple of 4
-        "k": 12,
-        "t": 2,
-        "N": jnp.array((9, 3)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 16.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 24,
-        "emission_streams": 3,
-        "boundstate_streams": 3,
-        "particle_limit": 6,
-        "boundstate_limit": 6,
-
-        "field_preloads": 100,
-    },
-    "cold_1gamma_medium": {
-        "name": "cold_1gamma_medium",
-        "n": 100,    # multiple of 4
-        "k": 500,
-        "t": 2,
-        "N": jnp.array((400, 100)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 16.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 1000,
-        "emission_streams": 20,
-        "boundstate_streams": 20,
-        "particle_limit": 120,
-        "boundstate_limit": 160,
-
-        "field_preloads": 100,
-    },
-    "cold_1gamma_large": {
-        "name": "cold_1gamma_large",
-        "n": 248,    # multiple of 4
-        "k": 2500,
-        "t": 2,
-        "N": jnp.array((2000, 500)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 16.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 5000,
-        "emission_streams": 100,
-        "boundstate_streams": 100,
-        "particle_limit": 500,
-        "boundstate_limit": 800,
-
-        "field_preloads": 100,
-    },
-    "warm_1gamma_tiny": {
-        "name": "warm_1gamma_tiny",
-        "n": 12,    # multiple of 4
-        "k": 12,
-        "t": 2,
-        "N": jnp.array((9, 3)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 4.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 24,
-        "emission_streams": 3,
-        "boundstate_streams": 3,
-        "particle_limit": 6,
-        "boundstate_limit": 6,
-
-        "field_preloads": 100,
-    },
-    "warm_1gamma_medium": {
-        "name": "warm_1gamma_medium",
-        "n": 100,    # multiple of 4
-        "k": 500,
-        "t": 2,
-        "N": jnp.array((400, 100)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 4.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 1000,
-        "emission_streams": 20,
-        "boundstate_streams": 20,
-        "particle_limit": 120,
-        "boundstate_limit": 160,
-
-        "field_preloads": 100,
-    },
-    "warm_1gamma_large": {
-        "name": "warm_1gamma_large",
-        "n": 248,    # multiple of 4
-        "k": 2500,
-        "t": 2,
-        "N": jnp.array((2000, 500)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 4.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 5000,
-        "emission_streams": 100,
-        "boundstate_streams": 100,
-        "particle_limit": 500,
-        "boundstate_limit": 800,
-
-        "field_preloads": 100,
-    },
-    "hot_1gamma_tiny": {
-        "name": "hot_1gamma_tiny",
-        "n": 12,    # multiple of 4
-        "k": 12,
-        "t": 2,
-        "N": jnp.array((9, 3)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 2.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 24,
-        "emission_streams": 3,
-        "boundstate_streams": 3,
-        "particle_limit": 6,
-        "boundstate_limit": 6,
-
-        "field_preloads": 100,
-    },
-    "hot_1gamma_medium": {
-        "name": "hot_1gamma_medium",
-        "n": 100,    # multiple of 4
-        "k": 500,
-        "t": 2,
-        "N": jnp.array((400, 100)),
-        "T_M": jnp.array((1, 2)),
-        "T_Q": jnp.array((-1, 1)),
-
-        "beta": 2.0,
-        "gamma": 1.0,
-
-        "mu": 1.0,
-
-        "alpha": 1.0,
-
-        "epsilon": 1.0,
-        "delta": 2,
-
-        "pad_value": 1000,
-        "emission_streams": 20,
-        "boundstate_streams": 20,
-        "particle_limit": 120,
-        "boundstate_limit": 160,
-
-        "field_preloads": 100,
-    },
+    "epsilon": [0.1, 0.2, 0.5, 1.0],
+    "delta": [2, 3, 5, 10],
 }
+
+
+DEFAULTS = {
+    "d": 2,
+    "k": 0,
+    "r_N": 3,
+
+    "beta": 4,
+    "gamma": -1,
+
+    "mu": -1,
+
+    "alpha": 3,
+
+    "epsilon": -1,
+    "delta": 0,
+}
+
+
+def build_config(param_indices):
+    CONFIG = {key: PARAMS[key][idx] for key, idx in param_indices.items()}
+    k, d, r_N = CONFIG["k"], CONFIG["d"], CONFIG["r_N"]
+    del CONFIG["d"]
+    del CONFIG["r_N"]
+
+    nondefaults = {key: val for key, val in CONFIG.items() if param_indices[key] != DEFAULTS[key]}
+    CONFIG["name"] = str(CONFIG["k"]) + "k_" + "_".join(
+        str(val).replace(".", "-") + key.replace("_", "") for key, val in nondefaults.items())
+
+    n_ = math.ceil(math.sqrt(d*k))
+    denom = math.lcm(4, (r_N + 1))
+    offset = denom if (n_ % denom) != 0 else 0
+    n = n_ + offset - (n_ % denom)           # multiple of 4 and r_N + 1
+    CONFIG["n"] = n
+
+    CONFIG["t"] = 2
+    CONFIG["T_M"] = jnp.array((1, 2))
+    CONFIG["T_Q"] = jnp.array((-1, 1))
+
+    k_p = k // (r_N + 1)
+    CONFIG["N"] = jnp.array((r_N * k_p, k_p))
+
+    CONFIG["pad_value"] = 2 * k
+    CONFIG["emission_streams"] = 2 * math.floor(math.sqrt(k)) 
+    CONFIG["boundstate_streams"] = CONFIG["emission_streams"]
+
+    CONFIG["particle_limit"] = (k // 7) + (k // 20) + 4
+    CONFIG["boundstate_limit"] = (CONFIG["particle_limit"] * 3) // 2
+    CONFIG["field_preloads"] = 100
+
+    return CONFIG

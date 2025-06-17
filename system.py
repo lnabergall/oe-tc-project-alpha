@@ -367,7 +367,7 @@ class ParticleSystem:
         """Generates external field values at the top of the lattice, plus the index of the starting set."""
         if self.drive:
             num_samples = self.n * self.field_preloads
-            unmasked_samples = wien_approximation(key, self.beta, self.alpha, num_samples)
+            unmasked_samples = wien_approximation(key, self.alpha, num_samples)
             external_fields = jnp.reshape(unmasked_samples, (self.field_preloads, self.n))
         else:
             external_fields = jnp.zeros((self.field_preloads, self.n))

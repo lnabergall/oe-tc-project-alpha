@@ -8,8 +8,6 @@ import jax
 import jax.numpy as jnp
 import h5py
 
-from configs import CONFIGS
-
 
 def get_foldername(config_name, time):
     return "data/" + config_name + time.strftime("-%Y%m%d-%H%M%S%f")
@@ -19,14 +17,11 @@ def get_config_filename(config_name, time):
     return get_foldername(config_name, time) + "/config.json"
 
 
-def get_config_fields():
-    return ("name", "time", "seed", "drive", "emissions", "logging", "saving", "snapshot_period")
-
-
 def save_config(config):
     file_name = get_config_filename(config["name"], config["time"])
-    config_info = {k: config[k].strftime("%Y%m%d-%H%M%S%f") if k == "time" else config[k] 
-                   for k in get_config_fields()}
+    config_info = {key: val.strftime("%Y%m%d-%H%M%S%f") 
+                   if key == "time" else (val.tolist() if isinstance(val, jax.Array) else val)
+                   for key, val in config.items()}
     file = Path(file_name)
     file.parent.mkdir(exist_ok=True, parents=True)
     with file.open("w") as f:
@@ -38,9 +33,9 @@ def load_config(config_name, time):
     with open(file_name, "r") as f:
         config_info = json.load(f)
 
-    config_info["time"] = datetime.strptime(config_info["time"], "%Y%m%d-%H%M%S%f")
-    config = CONFIGS[config_info["name"]]
-    config |= config_info
+    config = {key: jnp.array(val) if isinstance(val, list) else val 
+              for key, val in config_info.items()}
+    config["time"] = datetime.strptime(config_info["time"], "%Y%m%d-%H%M%S%f")
     return config
 
 
