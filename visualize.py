@@ -9,7 +9,8 @@ from system import ParticleSystem as System
 
 def generate_movie(states, system, frame_interval):
     fig, ax = plt.subplots(figsize=(10, 10))
-    scat = ax.scatter([], [], s=10, c=[], cmap="coolwarm", vmin=-1, vmax=1)
+    s = max(5000 // system.k, 1)      # particle size
+    scat = ax.scatter([], [], s=s, c=[], cmap="coolwarm", vmin=-1, vmax=1)
     ax.set_xlim(0, system.n)
     ax.set_ylim(0, system.n)
     ax.set_aspect("equal")
