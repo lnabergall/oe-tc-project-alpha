@@ -40,7 +40,7 @@ def load_config(config_name, time):
 
 
 def get_system_fields():
-    return ("step", "R", "P", "net_field", "U_total", "K_total", "E_total")
+    return ("step", "R", "P", "net_field", "U_total", "K_total", "E_total", "S_total")
 
 
 def extract_stored_data(data):

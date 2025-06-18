@@ -65,7 +65,7 @@ def plot_statistics(states, stat_names, folder_name, show_plot):
 def produce_graphics(config_name, time, frame_interval=200, show_plot=False):
     folder_name = get_foldername(config_name, time)
     states = load_states(config_name, time)
-    stat_names = ("E_total", "U_total", "K_total")
+    stat_names = ("E_total", "U_total", "K_total", "S_total")
 
     create_movie(states, config_name, time, folder_name, frame_interval)
     plot_statistics(states, stat_names, folder_name, show_plot)

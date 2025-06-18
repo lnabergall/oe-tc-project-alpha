@@ -68,6 +68,11 @@ class SystemData(NamedTuple):
     K_total: jax.Array = None               # total kinetic energy of the particle system. Scalar.
     E_total: jax.Array = None               # total energy of the particle system. Scalar.
 
+    # entropy
+    S: jax.Array = None                     # particle conditional entropies. 1D, k.
+    S_total: jax.Array = None               # total conditional entropy of the system. Scalar.
+    S_avg: jax.Array = None                 # average particle conditional entropy. Scalar.
+
 
 def assign_properties(t, k, N, T_M, T_Q):
     I = jnp.arange(k)
@@ -171,11 +176,16 @@ class ParticleSystem:
         emission_field = k2_zeros_float
         net_field = k2_zeros_float
 
+        log5 = jnp.log(5.0)
+        S = jnp.full((self.k,), log5)
+        S_total = self.k * log5
+        S_avg = log5
+
         data = SystemData(step=0, R=R, L=L, P=k2_zeros_float, external_fields=external_fields, 
                           ef_idx=ef_idx, external_field=external_field, emission_field=emission_field,
                           net_field=net_field, bound_states=bound_states_default, U=k_zeros_int, 
                           K=k_zeros_float, E=k_zeros_float, U_total=scalar_int, K_total=scalar_float, 
-                          E_total=scalar_float)
+                          E_total=scalar_float, S=S, S_total=S_total, S_avg=S_avg)
 
         if self.saving:
             initialize_hdf5(data, self.name, self.time)
@@ -266,10 +276,15 @@ class ParticleSystem:
         no_move = internal_data.no_move & no_move
         internal_data = internal_data._replace(logdensities=logdensities, probabilities=probabilities, 
                                                emission_indicator=emission_indicator, no_move=no_move)
+
+        # extra evaluation data
+        S = jax.vmap(entropy)(probabilities)
+        S_total = jnp.sum(S)
+        S_avg = S_total / self.k
         
         # update lattice
         L = generate_lattice(data.R, self.n, self.pad_value)
-        data = data._replace(L=L)
+        data = data._replace(L=L, S=S, S_total=S_total, S_avg=S_avg)
 
         ### bound state phase
         # calculate bound states

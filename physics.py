@@ -360,6 +360,12 @@ def calculate_probabilities(P_ne, Q_delta_mom, U, U_e, boundary_mask, mu, beta):
     return probabilities, logdensities
 
 
+def entropy(probabilities):
+    logp = jnp.log(probabilities)
+    S = -jnp.sum(jnp.nan_to_num(probabilities * logp, nan=0.0))
+    return S
+
+
 @partial(jax.jit, static_argnums=[4])
 def determine_emissions(U, is_bound, E_emit, K_ne, epsilon):
     energy_to_emit = E_emit > 0
