@@ -46,7 +46,7 @@ def build_config(param_indices):
 
     nondefaults = {key: val for key, val in CONFIG.items() if param_indices[key] != DEFAULTS[key]}
     CONFIG["name"] = str(CONFIG["k"]) + "k_" + "_".join(
-        str(val).replace(".", "-") + key.replace("_", "") for key, val in nondefaults.items())
+        str(val).replace(".", "-") + key.replace("_", "") for key, val in nondefaults.items() if key != "k")
 
     n_ = math.ceil(math.sqrt(d*k))
     denom = math.lcm(4, (r_N + 1))
