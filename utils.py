@@ -22,7 +22,7 @@ def replace(A, val1, val2):
 
 def place_2D(R, M, P):
     """Assign values from P into R at the row indices indicated by the 1D mask M."""
-    M = jnp.broadcast_to(jnp.expand_dims(M, -1), M.shape + (2,))
+    M = jnp.broadcast_to(M[..., None], M.shape + (2,))
     return jnp.place(R, M, P, inplace=False)
 
 

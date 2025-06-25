@@ -218,9 +218,9 @@ def centers_of_mass(R, M, bound_states):
     in a 0-padded 'k' length 2D Array and 1D Array, respectively.
     """
     mass_sums = compute_group_sums(M, bound_states)
-    position_sums = compute_group_sums(jnp.expand_dims(M, axis=-1) * R, bound_states)
+    position_sums = compute_group_sums(M[..., None] * R, bound_states)
     # use a mask to handle padding
-    mass_sums_expanded = jnp.expand_dims(mass_sums, axis=-1)
+    mass_sums_expanded = mass_sums[..., None]
     centers = jnp.where(mass_sums_expanded > 0, position_sums / mass_sums_expanded, 0)
     return centers, mass_sums
 
@@ -294,69 +294,102 @@ def masked(x, y, occupation_mask):
     return (v == 0) | (y <= i)
 
 
-@partial(jax.jit, static_argnums=[2, 3])
-def generate_drive_field(R, top_field, mask_func, n):
+@partial(jax.jit, static_argnums=[4, 5, 6])
+def generate_drive_field(top_field, R, P, M, mask_func, n, kappa):
+    k = R.shape[0]
+
+    # apply particle masking to base field values
     occupied = generate_unlabeled_lattice(R, n)
-    field = jnp.broadcast_to(top_field, (n, n))
+    base_field = jnp.broadcast_to(top_field, (n, n))
     mask_fn = lambda x, y: mask_func(x, y, occupied)
     particle_mask = jnp.fromfunction(mask_fn, (n, n), dtype=int)
-    return jnp.stack((jnp.zeros((n, n)), particle_mask * field), axis=-1)
+    base_field = particle_mask * base_field
+
+    # construct Lorentz field
+    base_field = base_field[R[:, 0], R[:, 1]]
+    k_zeros = jnp.zeros((k,))
+    E = jnp.stack((base_field, k_zeros), axis=-1)
+    V = P / M[..., None]
+    B = jnp.stack((k_zeros, k_zeros, base_field), axis=-1)
+    F = E + jnp.cross(jnp.concatenate(V, k_zeros, axis=-1), B / kappa)[:, :2]
+    return F
 
 
-@partial(jax.jit, static_argnums=[3, 4])
-def calculate_momentum_vectors(p, field, q, mu, gamma):
+@partial(jax.jit, static_argnums=[1, 2, 3])
+def brownian_noise(key, beta, gamma, num_samples):
+    keys = jax.random.split(key, num=num_samples)
+
+    @jax.jit
+    def sample_fn(key):
+        return jnp.sqrt(2*gamma / beta) * jax.random.normal(key)
+
+    samples = jax.vmap(sample_fn)(keys)
+    return samples
+
+
+def calculate_impulse(force, mu):
+    return mu * force
+
+
+def calculate_momentum_vectors(p, force, mu, gamma):
     p_v = (1 - gamma) * p
-    impulse = mu * q * field
-    p_nv = p + impulse
+    impulse = calculate_impulse(force, mu)
     p_ne = p_v + impulse
-    return p_v, p_nv, p_ne
+    return p_ne, p_v, impulse
 
 
 def lattice_norm_squared(p):
     return jnp.linalg.vector_norm(p, axis=-1, ord=1) ** 2
 
 
-def kinetic_energy(p, m):
-    return lattice_norm_squared(p) / (2 * m)
+def kinetic_energy(p, m_double):
+    return lattice_norm_squared(p) / m_double
 
 
-def compute_kinetic_energies(P, M):
-    return jax.vmap(kinetic_energy)(P, M)
+def compute_kinetic_energies(P, M_double):
+    return jax.vmap(kinetic_energy)(P, M_double)
 
 
-def calculate_partial_kinetic_factors(p_nv, p_ne, double_m):
-    K_ne = lattice_norm_squared(p_ne) / double_m
-    K_nv = lattice_norm_squared(p_nv) / double_m
-    Q_delta_momentum = K_nv - K_ne
-    return Q_delta_momentum, K_nv, K_ne
+def kinetic_energy_difference(K, p, m_double):
+    K2 = (lattice_norm_squared(p) / m_double)
+    return K2 - K, K2
 
 
-def calculate_kinetic_factors(p, p_nv, p_ne, m):
-    double_m = 2 * m
-    K = lattice_norm_squared(p) / double_m
-    Q_delta_momentum, K_nv, K_ne = calculate_partial_kinetic_factors(p_nv, p_ne, double_m)
-    E_emit = K_nv - K
-    return Q_delta_momentum, E_emit, K_ne
+def compute_kinetic_terms(I, P, net_force, U_grad, M, mu, gamma):
+    P, M = P[I], M[I]
+    net_force = net_force[I, None, :] - U_grad
+    momentum_fn = jax.vmap(jax.vmap(
+        calculate_momentum_vectors, in_axes=(None, 0, None, None)), in_axes=(0, 0, None, None))
+    P_ne, P_v, impulse = momentum_fn(P, net_force, mu, gamma)
+    M_double = 2 * M
+    K = compute_kinetic_energies(P, M_double)
+    K_ne = jax.vmap(jax.vmap(kinetic_energy, in_axes=(0, None)))(P_ne, M_double)
+    
+    return M, P, K, P_v, P_ne, K_ne, M_double, impulse
 
 
-@partial(jax.jit, static_argnums=[5])
-def calculate_heat_released(p_ne, e, Q_delta_mom, U, U_e, mu):
+def compute_potential_terms(U_nbhd):
+    U = U_nbhd[:, 0]
+    U_nbhd_diff = U_nbhd - U[:, None]
+    U_grad = U_nbhd_diff[..., None] * get_shifts()[None, ...]
+    return U, U_nbhd_diff, U_grad
+
+
+def calculate_heat_released(K, p_ne, K_ne, e, U_diff, m, mu):
     e = e.astype(p_ne.dtype)
-    Q_delta_pot = U_e - U
-    Q_delta = Q_delta_mom + (jnp.dot(p_ne, e) / mu) - Q_delta_pot
+    Q_delta = (jnp.dot(p_ne, e) / (m * mu)) + K - K_ne - U_diff
     return Q_delta
 
 
-@partial(jax.jit, static_argnums=[5, 6])
-def calculate_probabilities(P_ne, Q_delta_mom, U, U_e, boundary_mask, mu, beta):
+def calculate_probabilities(K, P_ne, K_ne, U_diff, boundary_mask, M, mu, beta):
     shifts = get_shifts()
     heat_fn = jax.vmap(jax.vmap(calculate_heat_released, 
-        in_axes=(None, 0, None, None, 0, None)), in_axes=(0, None, 0, 0, 0, None))
-    Q_deltas = heat_fn(P_ne, shifts, Q_delta_mom, U, U_e, mu)
+        in_axes=(None, 0, 0, 0, 0, None, None)), in_axes=(0, 0, 0, None, 0, 0, None))
+    Q_deltas = heat_fn(K, P_ne, K_ne, shifts, U_diff, M, mu)
     logdensities = beta * Q_deltas
     densities = boundary_mask * jnp.exp(logdensities)
     Z = jnp.sum(densities, axis=-1)
-    probabilities = densities / jnp.expand_dims(Z, axis=-1)
+    probabilities = densities / Z[..., None]
     return probabilities, logdensities
 
 
@@ -366,14 +399,17 @@ def entropy(probabilities):
     return S
 
 
-@partial(jax.jit, static_argnums=[4])
+def emission_energy(K, p, impulse, m_double):
+    p_nv = p + impulse
+    return kinetic_energy_difference(K, p_nv, m_double)[0]
+
+
 def determine_emissions(U, is_bound, E_emit, K_ne, epsilon):
     energy_to_emit = E_emit > 0
     high_energy = K_ne >= (-epsilon * U)
     return jnp.logical_and(jnp.logical_and(energy_to_emit, is_bound), high_energy)
 
 
-@partial(jax.jit, static_argnums=[6, 7, 8])
 def calculate_emissions(r, L, M, Q, P, E_emit, delta, mu, pad_value):
     """
     Calculates the field update vector for each particle in an energy emission event at 'r'.
@@ -411,20 +447,19 @@ def calculate_emissions(r, L, M, Q, P, E_emit, delta, mu, pad_value):
     inv_distances = jnp.where(inv_distances == jnp.inf, 0.0, inv_distances)
     normalizer = 1 / jnp.sum(inv_distances * excited_mask)
 
-    directions = Lr_square_positions - jnp.expand_dims(r, axis=0)
+    directions = Lr_square_positions - r[None, ...]
     Pr_norm_square = jnp.linalg.vector_norm(Pr_square, axis=-1, ord=1)
 
     field = 2 * Mr_square * normalizer * E_emit
     field = (Pr_norm_square ** 2) + (field * inv_distances)
-    field = jnp.expand_dims(jnp.sqrt(field) - Pr_norm_square, axis=-1)
-    field = directions * jnp.expand_dims(inv_distances, axis=-1) * field
-    field = field / (mu * jnp.expand_dims(Qr_square, axis=-1))
-    field = jnp.expand_dims(excited_particle_mask, axis=-1) * field 
+    field = jnp.sqrt(field) - Pr_norm_square
+    field = directions * inv_distances[..., None] * field[..., None]
+    field = field / (mu * Qr_square[..., None])
+    field = excited_particle_mask[..., None] * field
 
     return field, Lr_square_positions
 
 
-@partial(jax.jit, static_argnums=[2])
 def merge_excitations(field_arrays, position_arrays, n):
     field = jnp.zeros((n, n, 2), dtype=float)
     positions = position_arrays.reshape(-1, 2)

@@ -51,7 +51,7 @@ def generate_neighborhood(x, n, pad_value):
     Generate the neighborhood of a point 'x' in a lattice of size n, 
     with periodic first dimension.
     """
-    nbhd = cylindrical_coordinates(jnp.expand_dims(x, axis=0) + get_shifts(), n)
+    nbhd = cylindrical_coordinates(x[None, ...] + get_shifts(), n)
     nbhd = jnp.where((nbhd >= n) | (nbhd < 0), pad_value, nbhd)
     return nbhd
 
