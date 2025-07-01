@@ -2,10 +2,12 @@ from datetime import datetime
 from functools import partial
 from dataclasses import dataclass, field, asdict
 from typing import NamedTuple
+from time import perf_counter
 
 import jax
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
+from jax.experimental import io_callback
 
 from sample import *
 from physics import *
@@ -24,6 +26,9 @@ class InternalData(NamedTuple):
 
     # bound state helping data
     no_move: jax.Array = None                   # Recent particle movement indicator. 1D, k.
+
+    # timing
+    t_start: float = None                       # model run start time
 
 
 class SystemData(NamedTuple):
@@ -71,6 +76,11 @@ def assign_properties(t, k, N, T_M, T_Q):
     M = jnp.fromfunction(lambda i: T_M[T[i]], (k,), dtype=int)      # particle masses
     Q = jnp.fromfunction(lambda i: T_Q[T[i]], (k,), dtype=int)      # particle charges
     return I, T, M, Q
+
+
+def time_safe():
+    scalar = jnp.float32(0.0)
+    return io_callback(perf_counter, scalar)
 
 
 @register_pytree_node_class
@@ -194,8 +204,9 @@ class ParticleSystem:
         k5_zeros_float = jnp.zeros((self.k, 5), dtype=float)
         _8m_padding = jnp.full((8, self.particle_limit), self.pad_value)
 
-        internal_data = InternalData(P_particles=_8m_padding, logdensities=k5_zeros_float, 
-            probabilities=k5_zeros_float, emission_indicator=k_zeros_bool, no_move=k_zeros_bool)
+        internal_data = InternalData(
+            P_particles=_8m_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
+            emission_indicator=k_zeros_bool, no_move=k_zeros_bool, t_start=0.0)
 
         return data, internal_data
 
@@ -209,12 +220,14 @@ class ParticleSystem:
         jax_log_info("Running the system...")
         step_fn = lambda i, args: self.step(i, *args)
         data, internal_data, key = jax.lax.fori_loop(0, steps, step_fn, (data, internal_data, key))
+        jax_log_info("time per step: {:.3f}", (time_safe() - internal_data.t_start) / steps)
         jax_log_info("System run complete.")
 
         return key, data, internal_data
 
     def step(self, step, data, internal_data, key):
         jax_log_info("step {}...", step)
+        t_start = jax.lax.cond(step == 0, time_safe, lambda : internal_data.t_start)
 
         key, key_drive, key_particle, key_partition, key_boundstate = jax.random.split(key, 5)
 
@@ -248,7 +261,7 @@ class ParticleSystem:
         ### particle phase
         # assemble the partition
         P_particles = four_partition(data.R, data.L, self.particle_limit, self.pad_value)
-        internal_data = internal_data._replace(P_particles=P_particles)
+        internal_data = internal_data._replace(P_particles=P_particles, t_start=t_start)
 
         if self.logging:
             jax.debug.print("E_total: {}", E_total)
