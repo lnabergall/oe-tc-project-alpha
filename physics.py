@@ -180,7 +180,7 @@ def compute_bound_states(I, bonds, bound_states, visited, l, pad_value):
     Returns a 1D Array of size k giving the label integer of the bound state 
     associated to each particle.
     """
-    I_slice = I[:l]
+    I_slice = jnp.extract(~visited, I, size=l, fill_value=pad_value)
 
     def cond_fn(args):
         visited = args[2]
@@ -372,6 +372,7 @@ def compute_potential_terms(U_nbhd):
     U = U_nbhd[:, 0]
     U_nbhd_diff = U_nbhd - U[:, None]
     U_grad = U_nbhd_diff[..., None] * get_shifts()[None, ...]
+    U_grad = jnp.nan_to_num(U_grad, posinf=jnp.inf, neginf=-jnp.inf)
     return U, U_nbhd_diff, U_grad
 
 

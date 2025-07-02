@@ -176,7 +176,9 @@ class ParticleSystem:
 
         external_fields, ef_idx, brownian_fields, bf_idx = self.generate_fields(key_fields)
         external_field = jnp.zeros((self.n, self.n, 2), dtype=float)
-        mass_field = k2_zeros_float.at[:, 1].set(self.g)    # does not vary 
+        mass_field = k2_zeros_float
+        if self.drive:
+            mass_field = mass_field.at[:, 1].set(self.g)    # does not vary 
         emission_field = k2_zeros_float
         net_force = k2_zeros_float
 
@@ -206,7 +208,7 @@ class ParticleSystem:
 
         internal_data = InternalData(
             P_particles=_8m_padding, logdensities=k5_zeros_float, probabilities=k5_zeros_float, 
-            emission_indicator=k_zeros_bool, no_move=k_zeros_bool, t_start=0.0)
+            emission_indicator=k_zeros_bool, no_move=~k_zeros_bool, t_start=0.0)
 
         return data, internal_data
 
@@ -232,13 +234,12 @@ class ParticleSystem:
         key, key_drive, key_particle, key_partition, key_boundstate = jax.random.split(key, 5)
 
         # generate new drive and Brownian fields if needed
-        if self.drive:
-            null_fn = lambda _: (data.external_fields, data.ef_idx, data.brownian_fields, data.bf_idx)
-            fields_consumed = data.ef_idx >= data.external_fields.shape[0]
-            external_fields, ef_idx, brownian_fields, bf_idx = jax.lax.cond(
-                fields_consumed, self.generate_fields, null_fn, key_drive)
-            data = data._replace(external_fields=external_fields, ef_idx=ef_idx, 
-                                 brownian_fields=brownian_fields, bf_idx=bf_idx)
+        null_fn = lambda _: (data.external_fields, data.ef_idx, data.brownian_fields, data.bf_idx)
+        fields_consumed = data.bf_idx >= data.brownian_fields.shape[0]
+        external_fields, ef_idx, brownian_fields, bf_idx = jax.lax.cond(
+            fields_consumed, self.generate_fields, null_fn, key_drive)
+        data = data._replace(external_fields=external_fields, ef_idx=ef_idx, 
+                             brownian_fields=brownian_fields, bf_idx=bf_idx)
 
         # extra evaluation data
         LQ = generate_property_lattice(data.L, self.Q, self.pad_value)
@@ -353,8 +354,7 @@ class ParticleSystem:
         P = data.P.at[I].set(P_new, mode="drop")
         data = data._replace(R=R, P=P)
 
-        return (data, key), (logdensities, probabilities, 
-            emission_indicator, is_bound, no_move)
+        return (data, key), (logdensities, probabilities, emission_indicator, is_bound, no_move)
 
     def boundstate_gibbs_step(self, data, step, C_boundstates, key):
         I = jnp.nonzero(C_boundstates == step, size=self.boundstate_limit, fill_value=self.pad_value)[0]
