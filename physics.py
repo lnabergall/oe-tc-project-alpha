@@ -210,6 +210,7 @@ def compute_bound_states(I, bonds, bound_states, visited, l, pad_value):
 ### in different bound states to reduce redundant computation
 ### - could consider early termination of the bfs
 ### - more difficult: stitching bound states together, allowing for reduced computation
+### - track change in potential energy / new neighbors
 
 
 def centers_of_mass(R, M, bound_states):
@@ -311,7 +312,7 @@ def generate_drive_field(top_field, R, P, M, mask_func, n, kappa):
     E = jnp.stack((base_field, k_zeros), axis=-1)
     V = P / M[..., None]
     B = jnp.stack((k_zeros, k_zeros, base_field), axis=-1)
-    F = E + jnp.cross(jnp.concatenate(V, k_zeros, axis=-1), B / kappa)[:, :2]
+    F = E + jnp.cross(jnp.concatenate((V, k_zeros), axis=-1), B / kappa)[:, :2]
     return F
 
 
