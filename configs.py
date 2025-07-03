@@ -45,8 +45,6 @@ DEFAULTS = {
 def build_config(param_indices):
     CONFIG = {key: PARAMS[key][idx] for key, idx in param_indices.items()}
     k, d, r_N = CONFIG["k"], CONFIG["d"], CONFIG["r_N"]
-    del CONFIG["d"]
-    del CONFIG["r_N"]
 
     nondefaults = {key: val for key, val in CONFIG.items() if param_indices[key] != DEFAULTS[key]}
     CONFIG["name"] = str(CONFIG["k"]) + "k_" + "_".join(

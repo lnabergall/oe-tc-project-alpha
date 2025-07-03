@@ -89,8 +89,10 @@ class ParticleSystem:
     # system
     n: int                                  # number of lattice points along one dimension
     k: int                                  # number of particles
+    d: int                                  # particle density
     t: int                                  # number of particle types
     N: jax.Array                            # number particles of each type, should sum to k. 1D, t.
+    r_N: int                                # particle number ratio
     T_M: jax.Array                          # particle type masses. 1D, t.
     T_Q: jax.Array                          # particle type charges. 1D, t.
 
