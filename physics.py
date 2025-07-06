@@ -312,7 +312,7 @@ def generate_drive_field(top_field, R, P, M, mask_func, n, kappa):
     E = jnp.stack((base_field, k_zeros), axis=-1)
     V = P / M[..., None]
     B = jnp.stack((k_zeros, k_zeros, base_field), axis=-1)
-    F = E + jnp.cross(jnp.concatenate((V, k_zeros), axis=-1), B / kappa)[:, :2]
+    F = E + jnp.cross(jnp.concatenate((V, k_zeros[..., None]), axis=-1), B / kappa)[:, :2]
     return F
 
 

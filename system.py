@@ -43,9 +43,9 @@ class SystemData(NamedTuple):
     # fields
     external_fields: jax.Array = None       # top field values for the charge-coupled external drive. 2D, axn.
     ef_idx: int = None                      # index of the external field for the current step
-    brownian_fields: jax.Array = None       # fields produced by Brownian fluctuations. 3D, axnx2.
+    brownian_fields: jax.Array = None       # fields produced by Brownian fluctuations. 3D, axkx2.
     bf_idx: int = None                      # index of the Brownian field for the current step
-    external_field: jax.Array = None        # field produced by the charge-coupled external drive. 3D, nxnx2.
+    external_field: jax.Array = None        # field produced by the charge-coupled external drive. 3D, kx2.
     brownian_field: jax.Array = None        # field produced by Brownian fluctuations. 2D, kx2.
     mass_field: jax.Array = None            # field produced by the mass-coupled external drive. 2D, kx2.
     emission_field: jax.Array = None        # field produced by emission events. 2D, kx2.
@@ -177,7 +177,7 @@ class ParticleSystem:
         L = generate_lattice(R, self.n, self.pad_value)
 
         external_fields, ef_idx, brownian_fields, bf_idx = self.generate_fields(key_fields)
-        external_field = jnp.zeros((self.n, self.n, 2), dtype=float)
+        external_field = k2_zeros_float
         mass_field = k2_zeros_float
         if self.drive:
             mass_field = mass_field.at[:, 1].set(self.g)    # does not vary 
@@ -409,8 +409,7 @@ class ParticleSystem:
         else:
             external_field = data.external_field
         brownian_field = data.brownian_fields[data.bf_idx]
-        net_charge_force = self.Q[..., None] * (
-            external_field[data.R[:, 0], data.R[:, 1]] + data.emission_field)
+        net_charge_force = self.Q[..., None] * (external_field + data.emission_field)
         net_mass_force = self.M[..., None] * data.mass_field
         brownian_force = jnp.sqrt(self.M)[..., None] * brownian_field
         net_force = net_charge_force + net_mass_force + brownian_force
