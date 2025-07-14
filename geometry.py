@@ -19,6 +19,10 @@ def cylindrical_coordinates(A, n):
     return A.at[..., 0].set(A[..., 0] % n)
 
 
+def lattice_norm(x):
+    return jnp.linalg.vector_norm(x, axis=-1, ord=1)
+
+
 @partial(jax.jit, static_argnums=[1])
 def periodic_norm(x_diff, n):
     return jnp.min(jnp.stack((x_diff, n - x_diff)))
@@ -223,3 +227,21 @@ def four_group_partition(bound_states, L, key, part_size, pad_value):
 
     _, coloring, _ = jax.lax.while_loop(cond_fn, color_fn, (0, coloring, key))
     return coloring
+
+
+def sizes(bound_states):
+    """Bound states sizes."""
+    k = bound_states.size
+    return jnp.bincount(bound_states, length=k)
+
+
+def count(bound_states, pad_value):
+    """Number of total bound states, including free particles."""
+    k = bound_states.size
+    return jnp.sum(jnp.unique(bound_states, size=k, fill_value=pad_value) != pad_value)
+
+
+def density(bound_states, pad_value):
+    """Proportion of all particles in bound states."""
+    k = bound_states.size
+    return (k - jnp.sum(jnp.unique_counts(bound_states, size=k, fill_value=pad_value) == 1)) / k

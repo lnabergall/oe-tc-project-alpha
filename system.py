@@ -49,12 +49,20 @@ class SystemData(NamedTuple):
     brownian_field: jax.Array = None        # field produced by Brownian fluctuations. 2D, kx2.
     mass_field: jax.Array = None            # field produced by the mass-coupled external drive. 2D, kx2.
     emission_field: jax.Array = None        # field produced by emission events. 2D, kx2.
-    net_force: jax.Array = None             # net force experienced by each particle. 2D, kx2.
+
+    # impulse
+    nonint_impulse: jax.Array = None        # non-interactive impulse experienced by each particle. 2D, kx2.
+    delta_t: jax.Array = None               # effective time scale of each particle. 1D, k.
 
     # bound states
     bound_states: jax.Array = None          # bound state index of each particle. 1D, k.
     masses: jax.Array = None                # mass of each bound state. 1D, k, 0-padded.
     coms: jax.Array = None                  # center of mass of each bound state. 2D, kx2, 0-padded.
+
+    ### --- evaluation data ---
+
+    # momentum
+    P_avg: jax.Array = None                 # average particle momentum norm. Scalar.
 
     # energy
     U: jax.Array = None                     # particle potential energies. 1D, k.
@@ -63,11 +71,24 @@ class SystemData(NamedTuple):
     U_total: jax.Array = None               # total potential energy of the particle system. Scalar.
     K_total: jax.Array = None               # total kinetic energy of the particle system. Scalar.
     E_total: jax.Array = None               # total energy of the particle system. Scalar.
+    U_avg: jax.Array = None                 # average particle potential energy. Scalar.
+    K_avg: jax.Array = None                 # average particle kinetic energy. Scalar.
+    E_avg: jax.Array = None                 # average particle energy. Scalar.
 
     # entropy
     S: jax.Array = None                     # particle conditional entropies. 1D, k.
     S_total: jax.Array = None               # total conditional entropy of the system. Scalar.
     S_avg: jax.Array = None                 # average particle conditional entropy. Scalar.
+
+    # fields
+    external_field_avg: jax.Array = None    # average external field norm. Scalar.
+    mass_field_avg: jax.Array = None        # average mass field norm. Scalar.
+    impulse_avg: jax.Array = None           # average net non-interactive impulse norm. Scalar.
+
+    # bound states
+    bs_count: jax.Array = None              # number of bound states. Scalar.
+    bs_density: jax.Array = None            # density of bound states. Scalar.
+    bs_size_avg: jax.Array = None           # average bound state size. Scalar.
 
 
 def assign_properties(t, k, N, T_M, T_Q):
@@ -96,12 +117,12 @@ class ParticleSystem:
     T_M: jax.Array                          # particle type masses. 1D, t.
     T_Q: jax.Array                          # particle type charges. 1D, t.
 
+    # geometry
+    D: float                                # constant determining the unit distance scale
+
     # viscous heat bath
     beta: float                             # inverse temperature, 1/T
     gamma: float                            # collision coefficient
-
-    # dynamics
-    mu: float                               # constant converting force to impulse or momentum
 
     # external drives
     drive: bool                             # toggles the external drives
@@ -182,20 +203,17 @@ class ParticleSystem:
         if self.drive:
             mass_field = mass_field.at[:, 1].set(self.g)    # does not vary 
         emission_field = k2_zeros_float
-        net_force = k2_zeros_float
 
-        log5 = jnp.log(5.0)
-        S = jnp.full((self.k,), log5)
-        S_total = self.k * log5
-        S_avg = log5
-
-        data = SystemData(step=0, R=R, L=L, P=k2_zeros_float, external_fields=external_fields, 
-                          ef_idx=ef_idx, brownian_fields=brownian_fields, bf_idx=bf_idx, 
-                          external_field=external_field, brownian_field=k2_zeros_float, 
-                          mass_field=mass_field, emission_field=emission_field, net_force=net_force, 
-                          bound_states=bound_states_default, U=k_zeros_int, K=k_zeros_float, 
-                          E=k_zeros_float, U_total=scalar_int, K_total=scalar_float, 
-                          E_total=scalar_float, S=S, S_total=S_total, S_avg=S_avg)
+        data = SystemData(
+            step=0, R=R, L=L, P=k2_zeros_float, external_fields=external_fields, ef_idx=ef_idx, 
+            brownian_fields=brownian_fields, bf_idx=bf_idx, external_field=external_field, 
+            brownian_field=k2_zeros_float, mass_field=mass_field, emission_field=emission_field, 
+            nonint_impulse=k2_zeros_float, delta_t=k_zeros_float, bound_states=bound_states_default, 
+            U=k_zeros_int, K=k_zeros_float, E=k_zeros_float, U_total=scalar_int, K_total=scalar_float, 
+            E_total=scalar_float, U_avg=scalar_float, K_avg=scalar_float, E_avg=scalar_float, 
+            P_avg=scalar_float, S=k_zeros_float, S_total=scalar_float, S_avg=scalar_float, 
+            external_field_avg=scalar_float, mass_field_avg=scalar_float, impulse_avg=scalar_float, 
+            bs_count=self.k, bs_density=scalar_float, bs_size_avg=scalar_float)
 
         if self.saving:
             initialize_hdf5(data, self.name, self.time)
@@ -243,22 +261,15 @@ class ParticleSystem:
         data = data._replace(external_fields=external_fields, ef_idx=ef_idx, 
                              brownian_fields=brownian_fields, bf_idx=bf_idx)
 
-        # extra evaluation data
-        LQ = generate_property_lattice(data.L, self.Q, self.pad_value)
-        U = compute_potential_energies(data.R, self.Q, LQ, self.pad_value)
-        K = compute_kinetic_energies(data.P, 2*self.M)
-        E = compute_energies(U, K)
-        U_total, K_total = jnp.sum(U), jnp.sum(K)
-        E_total = compute_energies(U_total, K_total)
-
         # get field and other precomputable data for current step
-        (external_field, ef_idx, brownian_field, bf_idx, net_force) = self.system_update_data(data)
+        (external_field, ef_idx, brownian_field, bf_idx, nonint_impulse, delta_t) = self.system_update_data(data)
         data = data._replace(step=step, external_field=external_field, ef_idx=ef_idx, 
-                             brownian_field=brownian_field, bf_idx=bf_idx, net_force=net_force, 
-                             U=U, K=K, E=E, U_total=U_total, K_total=K_total, E_total=E_total)
+                             brownian_field=brownian_field, bf_idx=bf_idx, 
+                             nonint_impulse=nonint_impulse, delta_t=delta_t)
 
-        # save data if needed
+        # save data if needed, first generating eval data
         save = self.saving & ((step % self.snapshot_period) == 0)
+        data = jax.lax.cond(save, self.evaluation_data, lambda x: x, data)
         jax.lax.cond(save, self.save_state, lambda _: None, data)
 
         ### particle phase
@@ -267,7 +278,6 @@ class ParticleSystem:
         internal_data = internal_data._replace(P_particles=P_particles, t_start=t_start)
 
         if self.logging:
-            jax.debug.print("E_total: {}", E_total)
             jax.debug.print("R pre-particle: {}", data.R)
 
         # scan over partition
@@ -284,12 +294,10 @@ class ParticleSystem:
 
         # extra evaluation data
         S = jax.vmap(entropy)(probabilities)
-        S_total = jnp.sum(S)
-        S_avg = S_total / self.k
         
         # update lattice
         L = generate_lattice(data.R, self.n, self.pad_value)
-        data = data._replace(L=L, S=S, S_total=S_total, S_avg=S_avg)
+        data = data._replace(L=L, S=S)
 
         ### bound state phase
         # calculate bound states
@@ -297,9 +305,10 @@ class ParticleSystem:
         data = data._replace(bound_states=bound_states, masses=masses, coms=coms)
 
         # get field and other precomputable data for current step
-        (external_field, ef_idx, brownian_field, bf_idx, net_force) = self.system_update_data(data)
-        data = data._replace(external_field=external_field, ef_idx=ef_idx, brownian_field=brownian_field, 
-                             bf_idx=bf_idx, net_force=net_force)
+        (external_field, ef_idx, brownian_field, bf_idx, nonint_impulse, delta_t) = self.system_update_data(data)
+        data = data._replace(step=step, external_field=external_field, ef_idx=ef_idx, 
+                             brownian_field=brownian_field, bf_idx=bf_idx, 
+                             nonint_impulse=nonint_impulse, delta_t=delta_t)
 
         # determine a partition as a coloring
         C_boundstates = four_group_partition(data.bound_states, data.L, key_partition, 
@@ -341,7 +350,7 @@ class ParticleSystem:
 
         boundary_mask = R_Inbhd[:, :, 1] != self.pad_value
         probabilities, logdensities = calculate_probabilities(
-            K, P_ne, K_ne, U_Inbhd_diff, boundary_mask, M, self.mu, self.beta)
+            K, P_ne, K_ne, U_Inbhd_diff, boundary_mask, M, self.beta)
         next_indices, key = gibbs_sample(key, probabilities)
 
         # update states and data
@@ -366,7 +375,7 @@ class ParticleSystem:
             K, P_ne, K_ne) = self.boundstate_gibbs_update_data(data, I, I_particles)
         
         probabilities, logdensities = calculate_probabilities(
-            K, P_ne, K_ne, U_Inbhd_diff, boundary_mask, data.masses[I], self.mu, self.beta)
+            K, P_ne, K_ne, U_Inbhd_diff, boundary_mask, data.masses[I], self.beta)
         next_indices, key = gibbs_sample(key, probabilities)
 
         # update states and data
@@ -409,12 +418,16 @@ class ParticleSystem:
         else:
             external_field = data.external_field
         brownian_field = data.brownian_fields[data.bf_idx]
+
         net_charge_force = self.Q[..., None] * (external_field + data.emission_field)
         net_mass_force = self.M[..., None] * data.mass_field
         brownian_force = jnp.sqrt(self.M)[..., None] * brownian_field
-        net_force = net_charge_force + net_mass_force + brownian_force
+        net_nbforce = net_charge_force + net_mass_force
 
-        return external_field, data.ef_idx + 1, brownian_field, data.bf_idx + 1, net_force
+        delta_t = calculate_time_scale(data.P, net_nbforce, brownian_force, self.M, self.D)
+        nonint_impulse = (brownian_force * jnp.sqrt(delta_t)[:, None]) + (net_nbforce * delta_t[:, None])
+
+        return external_field, data.ef_idx + 1, brownian_field, data.bf_idx + 1, nonint_impulse, delta_t
 
     def particle_gibbs_update_data(self, data, I):
         """Multi-particle data needed for a single particle-phase Gibbs update step."""
@@ -428,7 +441,7 @@ class ParticleSystem:
 
         # kinetic terms
         M, P, K, P_v, P_ne, K_ne, M_double, impulse = compute_kinetic_terms(
-            I, data.P, data.net_force, U_grad, self.M, self.mu, self.gamma)
+            I, data.P, data.nonint_impulse, U_grad, data.delta_t, self.M, self.gamma)
         E_emit = jax.vmap(emission_energy)(K, P, impulse[:, 0], M_double)
 
         # bound state containment
@@ -451,7 +464,7 @@ class ParticleSystem:
         
         # particle kinetic terms
         _, _, K, _, P_ne_particle, K_ne, _, _ = compute_kinetic_terms(
-            I_particles, data.P, data.net_force, U_grad_particles, self.M, self.mu, self.gamma)
+            I_particles, data.P, data.nonint_impulse, U_grad_particles, data.delta_t, self.M, self.gamma)
         
         # merge statistics to boundstate level
         out_indicator = (R_Inbhd_particles == self.pad_value).astype(int)
@@ -476,7 +489,7 @@ class ParticleSystem:
             excitations_fn = jax.vmap(calculate_emissions, 
                 in_axes=(0, None, None, None, None, 0, None, None, None))
             field_arrays, position_arrays = excitations_fn(R_I, data.L, self.M, self.Q, 
-                data.P, internal_data.E_emit[I], self.delta, self.mu, self.pad_value)
+                data.P, internal_data.E_emit[I], self.delta, data.delta_t[I], self.pad_value)
             field_arrays = jnp.where(pad_mask.reshape((pad_mask.shape[0], 1, 1, 1)), 0.0, field_arrays)
 
             field = field.at[:, :, :].add(merge_excitations(field_arrays, position_arrays, self.n))
@@ -517,3 +530,33 @@ class ParticleSystem:
         coms, masses = centers_of_mass(data.R, self.M, bound_states)
 
         return bound_states, masses, coms
+
+    def evaluation_data(self, data):
+        LQ = generate_property_lattice(data.L, self.Q, self.pad_value)
+
+        U = compute_potential_energies(data.R, self.Q, LQ, self.pad_value)
+        K = compute_kinetic_energies(data.P, 2*self.M)
+        E = compute_energies(U, K)
+
+        P_norms, external_norms, mass_norms, nonint_impulse_norms = jax.tree.map(
+            partial(jnp.linalg.vector_norm, axis=-1), 
+            (data.P, data.external_field, data.mass_field, data.nonint_impulse))
+
+        bs_sizes = sizes(data.bound_states)
+        bs_count = count(data.bound_states, self.pad_value)
+        bs_density = density(data.bound_states, self.pad_value)
+
+        total_statistics = jax.tree.map(
+            jnp.sum, (U, K, data.S, P_norms, external_norms, mass_norms, nonint_impulse_norms, bs_sizes))
+        U_total, K_total, S_total, _, _, _, _, _ = total_statistics
+        E_total = compute_energies(U_total, K_total)
+
+        (E_avg, U_avg, K_avg, S_avg, P_avg, external_field_avg, mass_field_avg, 
+            impulse_avg, bs_size_avg) = jax.tree.map(lambda x: x / self.k, (E_total,) + total_statistics)
+
+        data = data._replace(
+            U=U, K=K, E=E, U_total=U_total, K_total=K_total, E_total=E_total, U_avg=U_avg, K_avg=K_avg, 
+            E_avg=E_avg, S_total=S_total, S_avg=S_avg, P_avg=P_avg, external_field_avg=external_field_avg, 
+            mass_field_avg=mass_field_avg, impulse_avg=impulse_avg, bs_count=bs_count, 
+            bs_density=bs_density, bs_size_avg=bs_size_avg)
+        return data
