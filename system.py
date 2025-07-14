@@ -552,7 +552,8 @@ class ParticleSystem:
         E_total = compute_energies(U_total, K_total)
 
         (E_avg, U_avg, K_avg, S_avg, P_avg, external_field_avg, mass_field_avg, 
-            impulse_avg, bs_size_avg) = jax.tree.map(lambda x: x / self.k, (E_total,) + total_statistics)
+            impulse_avg) = jax.tree.map(lambda x: x / self.k, (E_total,) + total_statistics[:-1])
+        bs_size_avg = total_statistics[-1] / bs_count
 
         data = data._replace(
             U=U, K=K, E=E, U_total=U_total, K_total=K_total, E_total=E_total, U_avg=U_avg, K_avg=K_avg, 

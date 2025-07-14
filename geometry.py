@@ -244,4 +244,4 @@ def count(bound_states, pad_value):
 def density(bound_states, pad_value):
     """Proportion of all particles in bound states."""
     k = bound_states.size
-    return (k - jnp.sum(jnp.unique_counts(bound_states, size=k, fill_value=pad_value) == 1)) / k
+    return (k - jnp.sum(jnp.bincount(bound_states, length=k) == 1)) / k
