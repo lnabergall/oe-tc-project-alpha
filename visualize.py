@@ -67,8 +67,6 @@ def produce_graphics(config_name, time, frame_interval=200, show_plot=False):
     folder_name = get_foldername(config_name, time)
     states = load_states(config_name, time)
 
-    create_movie(states, config_name, time, folder_name, frame_interval)
-
     linear_stats = [stat for stat in states._fields if "total" in stat] + ["bs_count"]
     plot_statistics(states, linear_stats, "totals", folder_name, show_plot)
 
@@ -77,3 +75,5 @@ def produce_graphics(config_name, time, frame_interval=200, show_plot=False):
 
     bs_stats = ["bs_density", "bs_size_avg"]
     plot_statistics(states, bs_stats, "bs_stats", folder_name, show_plot)
+
+    create_movie(states, config_name, time, folder_name, frame_interval)
