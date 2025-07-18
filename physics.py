@@ -328,9 +328,9 @@ def brownian_noise(key, beta, gamma, num_samples):
     return samples
 
 
-def calculate_time_scale(P, net_nbforce, brownian_force, M, D):
+def calculate_time_scale(P, brownian_force, nb_force, M, D):
     P_norm = lattice_norm(P)
-    fnb_norm = lattice_norm(net_nbforce)
+    fnb_norm = lattice_norm(nb_force)
     fb_norm = lattice_norm(brownian_force)
     mD = M * D
     P_bound = mD / P_norm
@@ -342,12 +342,6 @@ def calculate_time_scale(P, net_nbforce, brownian_force, M, D):
 
 def calculate_impulse(force, delta_t):
     return delta_t * force
-
-
-def calculate_momentum_vectors(p, impulse, gamma):
-    p_v = (1 - gamma) * p
-    p_ne = p_v + impulse
-    return p_ne, p_v
 
 
 def lattice_norm_squared(p):
@@ -367,17 +361,25 @@ def kinetic_energy_difference(K, p, m_double):
     return K2 - K, K2
 
 
-def compute_kinetic_terms(I, P, nonint_impulse, U_grad, delta_t, M, gamma):
-    P, M = P[I], M[I]
-    impulse = nonint_impulse[I, None, :] - calculate_impulse(U_grad, delta_t[I, None, None])
-    momentum_fn = jax.vmap(jax.vmap(
-        calculate_momentum_vectors, in_axes=(None, 0, None)), in_axes=(0, 0, None))
-    P_ne, P_v = momentum_fn(P, impulse, gamma)
+def compute_kinetic_terms(I, P, brownian_force, external_force, U_grad, M, gamma, D):
+    P, M, brownian_force = P[I], M[I], brownian_force[I]
+    P_ = P[:, None, :]
+    v_force = -gamma * P_
+    P_v = P_ + v_force
+
+    nb_force = external_force[I, None, :] - U_grad + v_force
+    delta_t = jax.vmap(calculate_time_scale, in_axes=(None, None, 1, None, None), out_axes=1)(
+        P, brownian_force, nb_force, M, D)
+    impulse = (calculate_impulse(brownian_force[:, None, :], jnp.sqrt(delta_t)[..., None]) + 
+               calculate_impulse(nb_force, delta_t[..., None]))
+    impulse = jnp.nan_to_num(impulse)
+
+    P_ne = P_v + impulse
     M_double = 2 * M
     K = compute_kinetic_energies(P, M_double)
     K_ne = jax.vmap(jax.vmap(kinetic_energy, in_axes=(0, None)))(P_ne, M_double)
     
-    return M, P, K, P_v, P_ne, K_ne, M_double, impulse
+    return M, P, K, P_v, P_ne, K_ne, M_double, impulse, delta_t
 
 
 def compute_potential_terms(U_nbhd):

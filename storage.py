@@ -40,9 +40,9 @@ def load_config(config_name, time):
 
 
 def get_system_fields():
-    return ("step", "R", "P", "nonint_impulse", "bound_states", "U_total", "K_total", "E_total", "S_total", 
-            "U_avg", "K_avg", "E_avg", "S_avg", "P_avg", "external_field_avg", "mass_field_avg", "impulse_avg",
-            "bs_count", "bs_density", "bs_size_avg")
+    return ("step", "R", "P", "U", "K", "E", "impulse", "bound_states", "U_total", "K_total", 
+            "E_total", "S_total", "U_avg", "K_avg", "E_avg", "S_avg", "P_avg", "external_field_avg", 
+            "mass_field_avg", "impulse_avg", "bs_count", "bs_density", "bs_size_avg")
 
 
 def extract_stored_data(data):
