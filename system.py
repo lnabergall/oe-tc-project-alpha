@@ -296,8 +296,6 @@ class ParticleSystem:
         internal_data = internal_data._replace(logdensities=logdensities, probabilities=probabilities, 
                                                emission_indicator=emission_indicator, no_move=no_move)
 
-        jax.debug.print("probabilities: {}", probabilities)
-
         # extra evaluation data
         S = jax.vmap(entropy)(probabilities)
         
