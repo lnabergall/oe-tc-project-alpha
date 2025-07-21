@@ -542,26 +542,5 @@ class ParticleSystem:
         K = compute_kinetic_energies(data.P, 2*self.M)
         E = compute_energies(U, K)
 
-        P_norms, external_norms, mass_norms, impulse_norms = jax.tree.map(
-            partial(jnp.linalg.vector_norm, axis=-1), 
-            (data.P, data.external_field, data.mass_field, data.impulse))
-
-        bs_sizes = sizes(data.bound_states)
-        bs_count = count(data.bound_states, self.pad_value)
-        bs_density = density(data.bound_states, self.pad_value)
-
-        total_statistics = jax.tree.map(
-            jnp.sum, (U, K, data.S, P_norms, external_norms, mass_norms, impulse_norms, bs_sizes))
-        U_total, K_total, S_total, _, _, _, _, _ = total_statistics
-        E_total = compute_energies(U_total, K_total)
-
-        (E_avg, U_avg, K_avg, S_avg, P_avg, external_field_avg, mass_field_avg, 
-            impulse_avg) = jax.tree.map(lambda x: x / self.k, (E_total,) + total_statistics[:-1])
-        bs_size_avg = total_statistics[-1] / bs_count
-
-        data = data._replace(
-            U=U, K=K, E=E, U_total=U_total, K_total=K_total, E_total=E_total, U_avg=U_avg, K_avg=K_avg, 
-            E_avg=E_avg, S_total=S_total, S_avg=S_avg, P_avg=P_avg, external_field_avg=external_field_avg, 
-            mass_field_avg=mass_field_avg, impulse_avg=impulse_avg, bs_count=bs_count, 
-            bs_density=bs_density, bs_size_avg=bs_size_avg)
+        data = data._replace(U=U, K=K, E=E)
         return data

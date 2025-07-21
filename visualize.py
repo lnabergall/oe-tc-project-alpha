@@ -5,6 +5,7 @@ import matplotlib.animation as animation
 
 from storage import *
 from system import ParticleSystem as System
+from evaluate import calculate_eval_data
 
 
 def generate_movie(states, system, frame_interval):
@@ -45,12 +46,11 @@ def create_movie(states, config_name, time, folder_name, frame_interval):
     save_movie(ani, folder_name, frame_interval)
 
 
-def plot_statistics(states, stat_names, plot_name, folder_name, show_plot):
+def plot_statistics(states, statistics, plot_name, folder_name, show_plot):
     file_name = folder_name + "/" + plot_name + "_plot.png"
-    statistics = {name: getattr(states, name) for name in stat_names}
 
     plt.figure(figsize=(10, 4))
-    for name, values in statistics.items():
+    for name, values in statistics:
         plt.plot(states.step, values, label=name)
     plt.xlabel("step")
     plt.ylabel("value")
@@ -63,17 +63,18 @@ def plot_statistics(states, stat_names, plot_name, folder_name, show_plot):
         plt.show()
 
 
+def generate_eval_data(states, folder_name, show_plot):
+    total_stats, avg_stats, small_avg_stats, bs_stats = calculate_eval_data(states)
+
+    plot_statistics(states, total_stats, "totals", folder_name, show_plot)
+    plot_statistics(states, avg_stats, "avgs", folder_name, show_plot)
+    plot_statistics(states, small_avg_stats, "small_avgs", folder_name, show_plot)
+    plot_statistics(states, bs_stats, "bs_stats", folder_name, show_plot)
+
+
 def produce_graphics(config_name, time, frame_interval=200, show_plot=False):
     folder_name = get_foldername(config_name, time)
     states = load_states(config_name, time)
 
-    linear_stats = [stat for stat in states._fields if "total" in stat] + ["bs_count"]
-    plot_statistics(states, linear_stats, "totals", folder_name, show_plot)
-
-    avg_stats = [stat for stat in states._fields if "avg" in stat]
-    plot_statistics(states, avg_stats, "avgs", folder_name, show_plot)
-
-    bs_stats = ["bs_density", "bs_size_avg"]
-    plot_statistics(states, bs_stats, "bs_stats", folder_name, show_plot)
-
+    generate_eval_data(states, folder_name, show_plot)
     create_movie(states, config_name, time, folder_name, frame_interval)

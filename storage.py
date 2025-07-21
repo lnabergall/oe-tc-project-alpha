@@ -9,6 +9,10 @@ import jax.numpy as jnp
 import h5py
 
 
+def string_to_datetime(timestamp):
+    return datetime.strptime(timestamp, "%Y%m%d-%H%M%S%f")
+
+
 def get_foldername(config_name, time):
     return "data/" + config_name + time.strftime("-%Y%m%d-%H%M%S%f")
 
@@ -40,9 +44,7 @@ def load_config(config_name, time):
 
 
 def get_system_fields():
-    return ("step", "R", "P", "U", "K", "E", "impulse", "bound_states", "U_total", "K_total", 
-            "E_total", "S_total", "U_avg", "K_avg", "E_avg", "S_avg", "P_avg", "external_field_avg", 
-            "mass_field_avg", "impulse_avg", "bs_count", "bs_density", "bs_size_avg")
+    return ("step", "R", "P", "brownian_field", "external_field", "U", "K", "E", "S", "impulse", "bound_states")
 
 
 def extract_stored_data(data):
@@ -81,7 +83,3 @@ def load_states(config_name, time):
             **{field: f[field][:] for field in get_system_fields()})
 
     return states
-
-
-def string_to_datetime(timestamp):
-    return datetime.strptime(timestamp, "%Y%m%d-%H%M%S%f")
