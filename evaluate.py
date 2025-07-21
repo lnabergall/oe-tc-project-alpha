@@ -11,7 +11,7 @@ BS_STATS = ["bs_size_avg", "bs_density"]
 
 
 def calculate_eval_data(states):
-    k = states.R.shape[0]
+    k = states.R.shape[1]
     pad_value = 2 * k
 
     norms = jax.tree.map(lattice_norm, (states.P, states.impulse, states.external_field, states.brownian_field))
