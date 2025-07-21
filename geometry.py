@@ -242,6 +242,12 @@ def count(bound_states):
     return jnp.sum(jnp.unique(bound_states, size=k, fill_value=pad) != pad)
 
 
+def count_bound(bound_states):
+    """Number of total bound states, not including free particles."""
+    k = bound_states.size
+    return k - jnp.sum(jnp.isin(jnp.bincount(bound_states, length=k), jnp.array((0, 1))))
+
+
 def density(bound_states):
     """Proportion of all particles in bound states."""
     k = bound_states.size
