@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from geometry import *
 
 
-TOTAL_STATS = ["U_total", "K_total", "E_total", "S_total", "P_total", "bs_count"]
+TOTAL_STATS = ["U_total", "K_total", "E_total", "S_total", "P_total", "bs_count", "bs_notfree_count"]
 AVG_STATS = ["U_avg", "K_avg", "E_avg", "S_avg", "P_avg", "impulse_avg", 
              "external_field_avg", "brownian_field_avg", "external_field_hit_avg"]
 BS_STATS = ["bs_size_avg", "bs_density"]
@@ -24,7 +24,7 @@ def calculate_eval_data(states):
         (states.U, states.K, states.E, states.S) + norms + (bs_stats[0],))
 
     avg_stats = jax.tree.map(lambda x: x / k, total_stats[:-1])
-    avg_stats += (total_stats[-3] / jnp.sum(external_field_norm != 0.0),)
+    avg_stats += (total_stats[-3] / jnp.sum(external_field_norm != 0.0, axis=-1),)
     bs_size_avg = total_stats[-1] / bs_stats[1]
     bs_stats[0] = bs_size_avg
 
