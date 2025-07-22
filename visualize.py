@@ -47,7 +47,7 @@ def create_movie(states, config_name, time, folder_name, frame_interval):
 
 
 def plot_statistics(states, statistics, plot_name, folder_name, show_plot):
-    file_name = folder_name + "/" + plot_name + "_plot.png"
+    file_name = folder_name + "/" + plot_name + "_plot.svg"
 
     plt.figure(figsize=(10, 4))
     for name, values in statistics:
@@ -58,7 +58,7 @@ def plot_statistics(states, statistics, plot_name, folder_name, show_plot):
     plt.legend()
     plt.tight_layout()
 
-    plt.savefig(file_name, dpi=300)
+    plt.savefig(file_name)
     if show_plot:
         plt.show()
 
