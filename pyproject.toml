@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oe-tc-project-alpha"
-version = "0.1.0"
+version = "0.2.0"
 description = "Large-scale JAX experiments in driven thermodynamic self-organization"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,8 +14,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+visualization = [
+  "matplotlib>=3.11,<3.12",
+  "pillow>=12.3,<13",
+  "imageio-ffmpeg>=0.6,<0.7",
+]
 dev = [
   "pytest>=9.1,<10",
+  "matplotlib>=3.11,<3.12",
+  "pillow>=12.3,<13",
+  "imageio-ffmpeg>=0.6,<0.7",
 ]
 
 [tool.setuptools]

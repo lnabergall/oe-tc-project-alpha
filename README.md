@@ -28,6 +28,8 @@ python -m venv .venv
 
 The default dependency installs the current CPU-capable JAX release. Follow
 JAX's platform-specific installation instructions for CUDA or TPU hardware.
+For a non-development installation with rendering support, use
+`pip install -e ".[visualization]"`.
 
 ## Run a simulation
 
@@ -88,6 +90,33 @@ are also canonicalized across quarter-turn rotations. A molecule that wraps
 around the periodic horizontal direction of the cylindrical lattice is treated
 separately because it cannot generally be lifted to one finite planar shape.
 
+## Visualize a run
+
+```bash
+python visualize.py data/runs/run_001
+```
+
+By default this writes `latest.png`, `movie.mp4`, `metrics.png`, and a
+reproducibility manifest under `RUN_DIRECTORY/visualization`. The movie uses a
+single global cool-to-warm energy scale centered on bath-equilibrium energy;
+the gold upper boundary marks the incident source. Bond lines are drawn behind
+particles, and `y = 0` appears at the physical top of the lattice.
+
+Rendering is host-only and does not initialize JAX. It reads only positions,
+energies, and bond masks from one snapshot at a time, rasterizes with
+NumPy/Pillow, and streams raw frames directly to FFmpeg. This avoids the
+per-particle Matplotlib artist and 300-DPI animation overhead of the legacy
+renderer. Use `--stride` and `--size` to bound work for long or very large runs:
+
+```bash
+python visualize.py data/runs/run_001 --stride 10 --size 768 --fps 30
+```
+
+Use `--no-movie`, `--no-metrics`, or `--no-bonds` to suppress individual
+outputs. `--energy-span` fixes the color range across comparable experiments;
+otherwise the range is selected once from all included frames using
+`--energy-percentile`.
+
 ## Validate and benchmark
 
 ```bash
@@ -115,7 +144,9 @@ accounting and conflict arbitration are expected to dominate mature large runs.
 - `oe_tc/simulation.py`: audited sweep composition and deterministic chunk
   scans;
 - `oe_tc/storage.py`, `oe_tc/runner.py`: versioned persistence and execution;
-- `oe_tc/evaluation.py`: structural diversity and novelty analysis.
+- `oe_tc/evaluation.py`: structural diversity and novelty analysis;
+- `oe_tc/visualization.py`: streamed state rasterization, movie encoding, and
+  metrics dashboards.
 
 Each structural proposal samples either a bath or internal-energy channel and
 uses a log-space Metropolis decision. Metrics include signed source and bath

@@ -13,10 +13,7 @@ import numpy as np
 
 from oe_tc.config import Params, StaticConfig
 from oe_tc.state import State, StepMetrics
-
-
-MODEL_VERSION = 1
-SCHEMA_VERSION = 2
+from oe_tc.version import MODEL_VERSION, SCHEMA_VERSION
 
 
 def _json_value(value):
