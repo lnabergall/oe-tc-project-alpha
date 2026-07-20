@@ -1,3 +1,16 @@
 # exclude log and note files
 *.log
 *.txt
+
+# generated Python and simulation artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.pytest-*/
+.venv/
+build/
+dist/
+data/
+*.sublime-project
+*.sublime-workspace
