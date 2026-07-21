@@ -517,7 +517,7 @@ def write_movie(
     path: str | Path,
     frames: Iterator[np.ndarray],
     *,
-    fps: float = 20.0,
+    fps: float = 5.0,
 ) -> tuple[Path, int]:
     """Stream RGB frames directly into a portable H.264 MP4."""
 
@@ -595,6 +595,28 @@ def _metric_samples(
     return indices + 1, values
 
 
+def _metric_smoothing_window(length: int) -> int:
+    """Choose a bounded odd rolling window for plotted per-sweep noise."""
+
+    if length < 400:
+        return 1
+    window = max(3, length // 200)
+    window += 1 - window % 2
+    return min(window, 101)
+
+
+def _smooth_metric(values: np.ndarray, window: int) -> np.ndarray:
+    """Return an edge-padded centered rolling mean with unchanged length."""
+
+    array = np.asarray(values, dtype=np.float64)
+    if window <= 1:
+        return array
+    radius = window // 2
+    padded = np.pad(array, (radius, radius), mode="edge")
+    kernel = np.full(window, 1.0 / window, dtype=np.float64)
+    return np.convolve(padded, kernel, mode="valid")
+
+
 def write_metrics_dashboard(
     metrics_path: str | Path,
     output_path: str | Path,
@@ -647,43 +669,64 @@ def write_metrics_dashboard(
     if missing:
         raise ValueError(f"metrics file is missing fields: {sorted(missing)}")
 
+    smoothing_window = _metric_smoothing_window(sweep.size)
+
+    def plot_series(axis, series: np.ndarray, label: str) -> None:
+        raw = np.asarray(series, dtype=np.float64)
+        if smoothing_window == 1:
+            axis.plot(sweep, raw, label=label)
+            return
+        raw_line = axis.plot(
+            sweep, raw, alpha=0.14, linewidth=0.55, label="_nolegend_"
+        )[0]
+        axis.plot(
+            sweep,
+            _smooth_metric(raw, smoothing_window),
+            color=raw_line.get_color(),
+            linewidth=1.6,
+            label=label,
+        )
+
     with plt.style.context("seaborn-v0_8-whitegrid"):
         figure, axes = plt.subplots(2, 2, figsize=(13, 8), constrained_layout=True)
         energy = axes[0, 0]
-        energy.plot(sweep, values["internal_energy"], label="internal")
-        energy.plot(sweep, values["configurational_energy"], label="configurational")
-        energy.plot(sweep, values["source_energy"], label="source flux", alpha=0.8)
+        plot_series(energy, values["internal_energy"], "internal")
+        plot_series(energy, values["configurational_energy"], "configurational")
+        plot_series(energy, values["source_energy"], "source flux")
         bath_flux = values["bath_energy_direct"] + values["bath_energy_structural"]
-        energy.plot(sweep, bath_flux, label="bath flux", alpha=0.8)
+        plot_series(energy, bath_flux, "bath flux")
         energy.set_title("Energy and flux")
         energy.legend(loc="best", fontsize="small")
 
         structure = axes[0, 1]
-        structure.plot(sweep, values["num_molecules"], label="molecules")
-        structure.plot(sweep, values["num_bonds"], label="bonds")
+        plot_series(structure, values["num_molecules"], "molecules")
+        plot_series(structure, values["num_bonds"], "bonds")
         structure.set_title("Structure")
         structure.legend(loc="best", fontsize="small")
 
         events = axes[1, 0]
-        events.plot(sweep, values["accepted_molecule_moves"], label="molecule moves")
-        events.plot(sweep, values["accepted_bond_flips"], label="bond flips")
-        events.plot(sweep, values["accepted_bath_exchanges"], label="bath exchanges")
+        plot_series(events, values["accepted_molecule_moves"], "molecule moves")
+        plot_series(events, values["accepted_bond_flips"], "bond flips")
+        plot_series(events, values["accepted_bath_exchanges"], "bath exchanges")
         events.set_title("Accepted events per sweep")
         events.legend(loc="best", fontsize="small")
 
         scheduler = axes[1, 1]
-        scheduler.plot(sweep, values["molecule_conflicts"], label="conflicts")
-        scheduler.plot(sweep, values["molecule_unresolved"], label="unresolved")
-        scheduler.plot(sweep, values["mis_iterations"], label="MIS iterations")
-        scheduler.plot(
-            sweep, values["component_iterations"], label="component iterations"
-        )
+        plot_series(scheduler, values["molecule_conflicts"], "conflicts")
+        plot_series(scheduler, values["molecule_unresolved"], "unresolved")
+        plot_series(scheduler, values["mis_iterations"], "MIS iterations")
+        plot_series(scheduler, values["component_iterations"], "component iterations")
         scheduler.set_title("Parallel scheduler")
         scheduler.legend(loc="best", fontsize="small")
 
         for axis in axes.flat:
             axis.set_xlabel("sweep")
-        figure.suptitle("OE-TC simulation diagnostics", fontsize=15)
+        title = "OE-TC simulation diagnostics"
+        if smoothing_window > 1:
+            sample_spacing = int(np.median(np.diff(sweep)))
+            span = smoothing_window * sample_spacing
+            title += f" (rolling mean over about {span} sweeps; raw traces faint)"
+        figure.suptitle(title, fontsize=15)
 
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -715,7 +758,7 @@ def visualize_run(
     *,
     output_directory: str | Path | None = None,
     image_size: int = 1024,
-    fps: float = 20.0,
+    fps: float = 5.0,
     stride: int = 1,
     start_sweep: int | None = None,
     end_sweep: int | None = None,

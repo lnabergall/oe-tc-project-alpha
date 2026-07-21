@@ -15,6 +15,8 @@ from oe_tc.version import MODEL_VERSION, SCHEMA_VERSION
 from oe_tc.visualization import (
     EnergyScale,
     HostFrame,
+    _metric_smoothing_window,
+    _smooth_metric,
     choose_energy_scale,
     discover_frames,
     energy_colors,
@@ -100,6 +102,17 @@ def _run(tmp_path: Path, *, snapshots: tuple[int, ...] = (1, 2, 3), final: int =
 def test_visualization_module_does_not_initialize_jax() -> None:
     code = "import sys; import oe_tc.visualization; assert 'jax' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_visualization_defaults_and_metric_smoothing() -> None:
+    assert visualize.build_parser().parse_args(("run",)).fps == 5.0
+    assert _metric_smoothing_window(399) == 1
+    assert _metric_smoothing_window(10_000) == 51
+    raw = np.arange(10, dtype=np.float64)
+    smoothed = _smooth_metric(raw, 5)
+    assert smoothed.shape == raw.shape
+    assert smoothed[5] == pytest.approx(5.0)
+    np.testing.assert_array_equal(_smooth_metric(raw, 1), raw)
 
 
 def test_discovery_filters_strides_and_retains_final_frame(tmp_path: Path) -> None:

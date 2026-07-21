@@ -97,25 +97,29 @@ class Params(NamedTuple):
 
 
 def default_params() -> Params:
-    """Return conservative numerical defaults for smoke tests and calibration.
+    """Return a calibrated dimensionless baseline.
 
-    These values define a runnable baseline, not a claimed physical calibration.
-    Production experiments should record all values in their run manifest.
+    The bonded-contact energy is the unit scale. The bath mode ``C * T_b`` is
+    therefore kept below one bond-breaking cost, while irradiation and direct
+    bath exchange are configured to reach a driven steady regime in small
+    calibration systems. The source-to-volume ratio remains geometry
+    dependent, so production experiments must still record and validate all
+    values at their intended size and density.
     """
 
     return Params(
         eta=0.1,
-        energy_floor=0.1,
-        heat_capacity=10.0,
-        bath_temperature=1.0,
-        source_beta=4.0,
+        energy_floor=0.05,
+        heat_capacity=2.5,
+        bath_temperature=0.2,
+        source_beta=48.0,
         gamma_base=1.0,
         gamma_exposure=1.0,
-        kappa_base=0.01,
-        kappa_exposure=0.04,
+        kappa_base=0.1,
+        kappa_exposure=0.4,
         conduction_contact=0.02,
         conduction_bond=0.10,
-        bath_energy_quantum=0.1,
+        bath_energy_quantum=0.25,
         bath_channel_probability=0.5,
         translation_probability=0.8,
         translation_frequency=0.25,

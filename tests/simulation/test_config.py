@@ -7,9 +7,16 @@ from oe_tc.config import StaticConfig, default_params, validate_params
 
 def test_default_configuration_is_valid():
     config = StaticConfig(n=16, num_particles=32)
-    validate_params(default_params())
+    params = default_params()
+    validate_params(params)
 
     assert config.empty == 32
+    bath_mode = params.heat_capacity * params.bath_temperature
+    bond_breaking_cost = 1.0 - params.eta
+    assert bath_mode == pytest.approx(0.5)
+    assert params.energy_floor < bath_mode < bond_breaking_cost
+    assert params.bath_energy_quantum < bath_mode
+    assert params.kappa_base + params.kappa_exposure == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize("n", [1, 2, 3, 15])

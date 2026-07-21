@@ -28,7 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=1024,
         help="maximum lattice image width in pixels (default: 1024)",
     )
-    parser.add_argument("--fps", type=float, default=20.0, help="movie frame rate")
+    parser.add_argument(
+        "--fps", type=float, default=5.0, help="movie frame rate (default: 5)"
+    )
     parser.add_argument(
         "--stride",
         type=int,

@@ -109,13 +109,14 @@ per-particle Matplotlib artist and 300-DPI animation overhead of the legacy
 renderer. Use `--stride` and `--size` to bound work for long or very large runs:
 
 ```bash
-python visualize.py data/runs/run_001 --stride 10 --size 768 --fps 30
+python visualize.py data/runs/run_001 --stride 10 --size 768 --fps 5
 ```
 
 Use `--no-movie`, `--no-metrics`, or `--no-bonds` to suppress individual
 outputs. `--energy-span` fixes the color range across comparable experiments;
 otherwise the range is selected once from all included frames using
-`--energy-percentile`.
+`--energy-percentile`. Metrics dashboards retain faint raw per-sweep traces and
+overlay adaptive rolling means for readable long-run trends.
 
 ## Validate and benchmark
 
@@ -155,11 +156,13 @@ A run is not persisted when bounded component labeling fails to converge.
 
 ## Numerical and scaling notes
 
-The default parameters are a runnable baseline, not a calibrated nonequilibrium
-steady state. Source input scales with occupied columns, while bath exchange and
-structural opportunities scale differently with particle count and geometry.
-Calibrate source, bath, and kinetic parameters at the intended lattice size and
-density before interpreting long-run behavior.
+The default parameters are a calibrated dimensionless baseline, not a universal
+physical calibration. The bonded-contact energy is the unit scale and the bath
+energy mode is `0.5`; source and bath parameters avoid secular heating in short
+calibration runs. Source input still scales with occupied columns, while bath
+exchange and structural opportunities scale differently with particle count and
+geometry. Revalidate source, bath, and kinetic parameters at the intended
+lattice size and density before interpreting long-run behavior.
 
 Internal energy uses `float32` for accelerator throughput. At very large
 energies, fixed heat or interaction quanta approach the local floating-point
