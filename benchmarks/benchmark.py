@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import statistics
 import time
 from typing import Any, Sequence
+
+from oe_tc.backend import configure_environment
 
 
 DEFAULT_N = 16
@@ -95,15 +96,6 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("seed must fit in an unsigned 32-bit integer")
 
 
-def _configure_environment(platform: str, no_preallocate: bool) -> None:
-    """Set backend environment variables before importing JAX."""
-
-    if platform != "auto":
-        os.environ["JAX_PLATFORMS"] = platform
-    if no_preallocate:
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-
-
 def _block_until_ready(jax: Any, value: Any) -> Any:
     """Synchronize every array leaf without copying results to the host."""
 
@@ -167,7 +159,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     """Compile, execute, synchronize, and summarize one benchmark case."""
 
     _validate_args(args)
-    _configure_environment(args.platform, args.no_preallocate)
+    configure_environment(args.platform, args.no_preallocate)
 
     import jax
 

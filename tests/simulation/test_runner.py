@@ -304,6 +304,8 @@ def test_resume_rejects_metrics_schema_mismatch(tmp_path, fake_runtime):
 def test_environment_configuration(monkeypatch):
     monkeypatch.delenv("JAX_PLATFORMS", raising=False)
     monkeypatch.delenv("XLA_PYTHON_CLIENT_PREALLOCATE", raising=False)
+    runner.configure_environment("gpu", False)
+    assert runner.os.environ["JAX_PLATFORMS"] == "cuda"
     runner.configure_environment("cpu", True)
     assert runner.os.environ["JAX_PLATFORMS"] == "cpu"
     assert runner.os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"

@@ -17,6 +17,7 @@ from typing import Any, Callable, NamedTuple, Sequence
 
 import numpy as np
 
+from oe_tc.backend import configure_environment
 from oe_tc.config import Params, StaticConfig, default_params, validate_params
 
 
@@ -136,15 +137,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--quiet", action="store_true", help="suppress chunk progress")
     return parser
-
-
-def configure_environment(platform: str, no_preallocate: bool) -> None:
-    """Set JAX environment options before any runtime import."""
-
-    if platform != "auto":
-        os.environ["JAX_PLATFORMS"] = platform
-    if no_preallocate:
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
 def _load_runtime() -> Runtime:

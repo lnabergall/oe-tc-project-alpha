@@ -8,9 +8,10 @@ any module that imports JAX.  All substantive CLI behavior lives in
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from typing import Sequence
+
+from oe_tc.backend import configure_environment
 
 
 def _bootstrap(argv: Sequence[str]) -> None:
@@ -18,10 +19,7 @@ def _bootstrap(argv: Sequence[str]) -> None:
     parser.add_argument("--platform", choices=("auto", "cpu", "gpu", "tpu"), default="auto")
     parser.add_argument("--no-preallocate", action="store_true")
     args, _ = parser.parse_known_args(argv)
-    if args.platform != "auto":
-        os.environ["JAX_PLATFORMS"] = args.platform
-    if args.no_preallocate:
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    configure_environment(args.platform, args.no_preallocate)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
