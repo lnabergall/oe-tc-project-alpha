@@ -18,16 +18,47 @@ Earlier experiments are preserved under `legacy/` and are not maintained.
 
 ## Setup
 
-Python 3.12 or newer is required.
+Python 3.12 or newer is required. For a CPU development environment:
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python -m pip install --upgrade pip
-.venv/Scripts/python -m pip install -e ".[dev]"
+python -m pip --python .venv install --upgrade pip
+python -m pip --python .venv install -e ".[dev]"
 ```
 
-The default dependency installs the current CPU-capable JAX release. Follow
-JAX's platform-specific installation instructions for CUDA or TPU hardware.
+For NVIDIA acceleration, use the repository from the WSL ext4 filesystem
+(such as `~/oe-tc-project-alpha`), not through `/mnt/c`. An up-to-date Windows
+NVIDIA driver must expose the GPU to WSL, but neither a Linux display driver nor
+a separately installed CUDA toolkit is required. From Ubuntu under WSL 2, run:
+
+```bash
+cd ~/oe-tc-project-alpha
+bash scripts/setup_wsl_cuda.sh
+source .venv/bin/activate
+```
+
+The setup script installs the pip-bundled JAX CUDA 13 runtime from the `cuda13`
+extra and finishes by executing a GPU matrix workload. It deliberately fails
+rather than silently accepting a CPU fallback. Avoid setting `LD_LIBRARY_PATH`
+to another CUDA installation, which can override JAX's bundled libraries.
+Re-run the script after dependency changes; it safely upgrades the existing
+environment.
+
+Validate the complete environment and measure the actual simulation kernel:
+
+```bash
+python -m pytest
+python scripts/verify_cuda.py
+python benchmarks/benchmark.py --platform gpu --no-preallocate \
+  --n 64 --density 0.25 --chunk-size 16 --warmups 2 --repeats 10
+```
+
+The RTX 3050 Ti has 4 GiB of device memory, so begin at `n=64` or `n=128`, use
+`--no-preallocate` while calibrating, and increase the lattice only after
+measuring resident memory and throughput. The default dependency remains
+CPU-capable JAX; `.[cuda13]` is intentionally opt-in. GitHub Actions runs the
+full test suite on CPU for every push and pull request.
+
 For a non-development installation with rendering support, use
 `pip install -e ".[visualization]"`.
 
