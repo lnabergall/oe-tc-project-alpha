@@ -37,9 +37,12 @@ bash scripts/setup_wsl_cuda.sh
 source .venv/bin/activate
 ```
 
-The setup script installs the pip-bundled JAX CUDA 13 runtime from the `cuda13`
-extra and finishes by executing a GPU matrix workload. It deliberately fails
-rather than silently accepting a CPU fallback. Avoid setting `LD_LIBRARY_PATH`
+The setup script installs the pip-bundled JAX CUDA 12 runtime from the `cuda12`
+extra and finishes by executing a GPU matrix workload. CUDA 12 is the newest
+JAX runtime verified on this WSL/RTX configuration; the CUDA 13 PJRT client
+currently crashes during initialization. The verifier disables JAX memory
+preallocation, which otherwise fails on this 4 GiB WSL GPU. It deliberately
+fails rather than silently accepting a CPU fallback. Avoid setting `LD_LIBRARY_PATH`
 to another CUDA installation, which can override JAX's bundled libraries.
 Re-run the script after dependency changes; it safely upgrades the existing
 environment.
@@ -47,7 +50,7 @@ environment.
 Validate the complete environment and measure the actual simulation kernel:
 
 ```bash
-python -m pytest
+XLA_PYTHON_CLIENT_PREALLOCATE=false python -m pytest
 python scripts/verify_cuda.py
 python benchmarks/benchmark.py --platform gpu --no-preallocate \
   --n 64 --density 0.25 --chunk-size 16 --warmups 2 --repeats 10
@@ -56,7 +59,7 @@ python benchmarks/benchmark.py --platform gpu --no-preallocate \
 The RTX 3050 Ti has 4 GiB of device memory, so begin at `n=64` or `n=128`, use
 `--no-preallocate` while calibrating, and increase the lattice only after
 measuring resident memory and throughput. The default dependency remains
-CPU-capable JAX; `.[cuda13]` is intentionally opt-in. GitHub Actions runs the
+CPU-capable JAX; `.[cuda12]` is intentionally opt-in. GitHub Actions runs the
 full test suite on CPU for every push and pull request.
 
 For a non-development installation with rendering support, use

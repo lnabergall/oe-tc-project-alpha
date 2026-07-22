@@ -28,7 +28,7 @@ if ! "${python_cmd}" -m venv "${venv_path}"; then
 fi
 
 "${venv_path}/bin/python" -m pip install --upgrade pip
-"${venv_path}/bin/python" -m pip install --upgrade -e ".[dev,cuda13]"
+"${venv_path}/bin/python" -m pip install --upgrade -e ".[dev,cuda12]"
 "${venv_path}/bin/python" "${repo_root}/scripts/verify_cuda.py"
 
 cat <<EOF
@@ -36,4 +36,6 @@ cat <<EOF
 CUDA environment is ready.
 Activate it with:
   source "${venv_path}/bin/activate"
+For direct JAX and pytest commands in WSL:
+  export XLA_PYTHON_CLIENT_PREALLOCATE=false
 EOF

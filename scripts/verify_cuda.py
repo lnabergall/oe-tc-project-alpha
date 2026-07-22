@@ -7,7 +7,8 @@ import math
 import os
 
 # Fail during backend initialization instead of silently falling back to CPU.
-os.environ.setdefault("JAX_PLATFORMS", "gpu")
+os.environ.setdefault("JAX_PLATFORMS", "cuda")
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import jax
 import jax.numpy as jnp
@@ -32,6 +33,7 @@ def main() -> int:
         "device": str(device),
         "device_kind": device.device_kind,
         "local_device_count": jax.local_device_count(),
+        "preallocate": os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"],
         "workload": "2048x2048 float32 matrix product",
         "checksum": checksum,
     }
