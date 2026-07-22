@@ -44,8 +44,12 @@ def test_channel_affinities_reduce_to_the_model_formulas() -> None:
     before = jnp.asarray((2.0, 3.0))
     after = jnp.asarray((2.4, 2.6))
     expected = 4.0 * np.sum(np.log(np.asarray(after) / np.asarray(before)))
+    # CPU and CUDA logarithms may differ by several float32 ULPs.
     np.testing.assert_allclose(
-        internal_channel_affinity(before, after, 4.0, 0.1), expected, atol=1e-7
+        internal_channel_affinity(before, after, 4.0, 0.1),
+        expected,
+        rtol=2e-6,
+        atol=1e-7,
     )
 
 
