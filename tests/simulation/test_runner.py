@@ -301,6 +301,32 @@ def test_resume_rejects_metrics_schema_mismatch(tmp_path, fake_runtime):
         runner.run(_resume_spec(output, fake_runtime, steps=1), fake_runtime, platform="cpu", quiet=True)
 
 
+def test_atomic_replace_retries_transient_permission_error(tmp_path, monkeypatch):
+    source = tmp_path / ".checkpoint.tmp.h5"
+    destination = tmp_path / "checkpoint.h5"
+    source.write_bytes(b"new")
+    destination.write_bytes(b"old")
+    real_replace = runner.os.replace
+    attempts = []
+    delays = []
+
+    def flaky_replace(current_source, current_destination):
+        attempts.append((current_source, current_destination))
+        if len(attempts) < 3:
+            raise PermissionError("transient sharing violation")
+        real_replace(current_source, current_destination)
+
+    monkeypatch.setattr(runner.os, "replace", flaky_replace)
+    monkeypatch.setattr(runner.time, "sleep", delays.append)
+
+    runner._replace_with_retry(source, destination)
+
+    assert destination.read_bytes() == b"new"
+    assert not source.exists()
+    assert len(attempts) == 3
+    assert delays == [0.025, 0.05]
+
+
 def test_environment_configuration(monkeypatch):
     monkeypatch.delenv("JAX_PLATFORMS", raising=False)
     monkeypatch.delenv("XLA_PYTHON_CLIENT_PREALLOCATE", raising=False)

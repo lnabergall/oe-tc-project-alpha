@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any, Callable, NamedTuple, Sequence
 
 import numpy as np
@@ -27,6 +28,9 @@ MANIFEST_NAME = "manifest.json"
 METRICS_NAME = "metrics.h5"
 CHECKPOINT_NAME = "checkpoint.h5"
 SNAPSHOT_DIRECTORY = "snapshots"
+ATOMIC_REPLACE_ATTEMPTS = 12
+ATOMIC_REPLACE_INITIAL_DELAY = 0.025
+ATOMIC_REPLACE_MAX_DELAY = 0.5
 
 
 @dataclass(frozen=True)
@@ -362,18 +366,33 @@ def resolve_run_spec(args: argparse.Namespace, runtime: Runtime) -> RunSpec:
     )
 
 
+def _replace_with_retry(source: Path, destination: Path) -> None:
+    """Atomically replace a file despite transient scanner or sync locks."""
+
+    delay = ATOMIC_REPLACE_INITIAL_DELAY
+    for attempt in range(ATOMIC_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt + 1 == ATOMIC_REPLACE_ATTEMPTS:
+                raise
+            time.sleep(delay)
+            delay = min(ATOMIC_REPLACE_MAX_DELAY, delay * 2.0)
+
+
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
-    os.replace(temporary, path)
+    _replace_with_retry(temporary, path)
 
 
 def _atomic_checkpoint(runtime: Runtime, path: Path, state: Any, base_key: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.stem}.tmp{path.suffix}")
     runtime.save_checkpoint(temporary, state, base_key)
-    os.replace(temporary, path)
+    _replace_with_retry(temporary, path)
 
 
 def _snapshot_path(paths: RunPaths, sweep: int) -> Path:
