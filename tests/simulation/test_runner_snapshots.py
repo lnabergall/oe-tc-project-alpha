@@ -97,9 +97,11 @@ def test_snapshots_align_chunks_and_resume_without_overwriting(tmp_path):
     )
     runner.run(initial, runtime, platform="cpu", quiet=True)
 
+    snapshot_0 = output / runner.SNAPSHOT_DIRECTORY / "sweep_0000000000.h5"
     snapshot_2 = output / runner.SNAPSHOT_DIRECTORY / "sweep_0000000002.h5"
     snapshot_4 = output / runner.SNAPSHOT_DIRECTORY / "sweep_0000000004.h5"
-    assert snapshot_2.is_file() and snapshot_4.is_file()
+    assert snapshot_0.is_file() and snapshot_2.is_file() and snapshot_4.is_file()
+    assert int(load_checkpoint(snapshot_0)[0].sweep) == 0
     assert int(load_checkpoint(snapshot_2)[0].sweep) == 2
     assert int(load_checkpoint(snapshot_4)[0].sweep) == 4
     original_digests = (_digest(snapshot_2), _digest(snapshot_4))
@@ -116,6 +118,20 @@ def test_snapshots_align_chunks_and_resume_without_overwriting(tmp_path):
     assert (_digest(snapshot_2), _digest(snapshot_4)) == original_digests
     snapshot_6 = output / runner.SNAPSHOT_DIRECTORY / "sweep_0000000006.h5"
     assert int(load_checkpoint(snapshot_6)[0].sweep) == 6
+
+
+def test_initial_snapshot_is_written_without_periodic_snapshots(tmp_path):
+    runtime = _runtime()
+    output = tmp_path / "run"
+    spec = runner.resolve_run_spec(
+        _args("--n", 4, "--particles", 2, "--steps", 1, "--output", output),
+        runtime,
+    )
+
+    runner.run(spec, runtime, platform="cpu", quiet=True)
+
+    initial = output / runner.SNAPSHOT_DIRECTORY / "sweep_0000000000.h5"
+    assert int(load_checkpoint(initial)[0].sweep) == 0
 
 
 def test_snapshot_interval_is_positive_and_immutable(tmp_path):

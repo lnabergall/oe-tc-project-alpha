@@ -179,7 +179,7 @@ def test_downsampled_render_has_bounded_output() -> None:
 
 
 def test_visualize_run_writes_png_movie_dashboard_and_metadata(tmp_path: Path) -> None:
-    run_directory = _run(tmp_path, snapshots=(1,), final=2)
+    run_directory = _run(tmp_path, snapshots=(0, 1), final=2)
     output = tmp_path / "graphics"
     result = visualize_run(
         run_directory,
@@ -188,13 +188,15 @@ def test_visualize_run_writes_png_movie_dashboard_and_metadata(tmp_path: Path) -
         fps=5.0,
     )
 
-    assert result.frame_count == 2
+    assert result.frame_count == 3
+    assert result.initial_frame is not None and result.initial_frame.is_file()
     assert result.latest_frame.is_file()
     assert result.movie is not None and result.movie.stat().st_size > 0
     assert result.metrics is not None and result.metrics.stat().st_size > 0
     assert Image.open(result.latest_frame).size == (128, 220)
     metadata = json.loads(result.metadata.read_text(encoding="utf-8"))
-    assert metadata["movie_frame_count"] == 2
+    assert metadata["movie_frame_count"] == 3
+    assert metadata["outputs"]["initial_frame"] == "initial.png"
     assert metadata["energy_scale"]["center"] == 10.0
 
 
@@ -217,5 +219,7 @@ def test_visualize_cli_can_render_latest_frame_only(tmp_path: Path, capsys) -> N
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["frame_count"] == 1
+    assert payload["initial_frame"] == str(output / "initial.png")
     assert payload["movie"] is None
+    assert (output / "initial.png").is_file()
     assert (output / "latest.png").is_file()

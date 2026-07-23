@@ -640,6 +640,7 @@ def run(spec: RunSpec, runtime: Runtime, *, platform: str, quiet: bool) -> Any:
         host_state = jax.device_get(state)
         completed = int(np.asarray(host_state.sweep))
         _atomic_checkpoint(runtime, spec.paths.checkpoint, host_state, base_key)
+        _ensure_snapshot(spec, runtime, host_state, base_key, completed)
 
     if not quiet:
         device = jax.tree.leaves(state)[0].device

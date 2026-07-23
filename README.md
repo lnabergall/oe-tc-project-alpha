@@ -86,7 +86,8 @@ cross to the host only at chunk boundaries. A run directory contains:
   versions;
 - `metrics.h5`: append-only per-sweep flux, state, and scheduler diagnostics;
 - `checkpoint.h5`: latest state, sweep counter, and base random key;
-- `snapshots/sweep_*.h5`: optional immutable analysis snapshots.
+- `snapshots/sweep_0000000000.h5`: the immutable initial state;
+- later `snapshots/sweep_*.h5`: optional periodic analysis snapshots.
 
 Resume to a new total target sweep with:
 
@@ -130,7 +131,7 @@ separately because it cannot generally be lifted to one finite planar shape.
 python visualize.py data/runs/run_001
 ```
 
-By default this writes `latest.png`, `movie.mp4`, `metrics.png`, and a
+By default this writes `initial.png`, `latest.png`, `movie.mp4`, `metrics.png`, and a
 reproducibility manifest under `RUN_DIRECTORY/visualization`. The movie uses a
 single global cool-to-warm energy scale centered on bath-equilibrium energy;
 the gold upper boundary marks the incident source. Bond lines are drawn behind

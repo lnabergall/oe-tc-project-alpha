@@ -67,6 +67,7 @@ class RunFrames:
     n: int
     num_particles: int
     bath_energy: float
+    initial: FrameReference | None
     frames: tuple[FrameReference, ...]
 
 
@@ -91,6 +92,7 @@ class EnergyScale:
 class VisualizationResult:
     """Artifacts produced by :func:`visualize_run`."""
 
+    initial_frame: Path | None
     latest_frame: Path
     movie: Path | None
     metrics: Path | None
@@ -215,7 +217,17 @@ def discover_frames(
     if selected[-1] != filtered[-1]:
         selected.append(filtered[-1])
 
-    return RunFrames(directory, n, num_particles, bath_energy, tuple(selected))
+    initial = next(
+        (reference for reference in references if reference.sweep == 0), None
+    )
+    return RunFrames(
+        directory,
+        n,
+        num_particles,
+        bath_energy,
+        initial,
+        tuple(selected),
+    )
 
 
 def load_frame(run: RunFrames, reference: FrameReference) -> HostFrame:
@@ -785,6 +797,17 @@ def visualize_run(
     output.mkdir(parents=True, exist_ok=True)
     scale = choose_energy_scale(run, percentile=energy_percentile, span=energy_span)
 
+    initial_path: Path | None = None
+    if run.initial is not None:
+        initial = render_frame(
+            load_frame(run, run.initial),
+            n=run.n,
+            scale=scale,
+            image_size=image_size,
+            show_bonds=show_bonds,
+        )
+        initial_path = write_png(output / "initial.png", initial)
+
     last = render_frame(
         load_frame(run, run.frames[-1]),
         n=run.n,
@@ -833,6 +856,7 @@ def visualize_run(
         "show_bonds": show_bonds,
         "energy_scale": asdict(scale),
         "outputs": {
+            "initial_frame": initial_path.name if initial_path is not None else None,
             "latest_frame": latest_path.name,
             "movie": movie_path.name if movie_path is not None else None,
             "metrics": metrics_path.name if metrics_path is not None else None,
@@ -840,6 +864,7 @@ def visualize_run(
     }
     _atomic_json(metadata_path, metadata)
     return VisualizationResult(
+        initial_path,
         latest_path,
         movie_path,
         metrics_path,
