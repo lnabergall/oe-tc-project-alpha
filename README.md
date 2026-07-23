@@ -153,6 +153,22 @@ otherwise the range is selected once from all included frames using
 `--energy-percentile`. Metrics dashboards retain faint raw per-sweep traces and
 overlay adaptive rolling means for readable long-run trends.
 
+## Run frozen-geometry thermal controls
+
+```bash
+python thermal_quench.py data/runs/run_001 \
+  --steps 4096 --replicates 4 \
+  --output data/experiments/thermal_quench_run_001
+```
+
+This source-off experiment freezes geometry and bonds, compares actual,
+uniform, localized, and canonical-background energy distributions, and varies
+conduction and exposure-dependent bath coupling. It reports heat relative to a
+matched thermal background so conduction-assisted removal of injected excess
+is not confused with a shifted source-off baseline. Use `--state-file` to test
+a snapshot instead of the current checkpoint and `--quench-total` to impose the
+same total energy across structural checkpoints.
+
 ## Validate and benchmark
 
 ```bash
