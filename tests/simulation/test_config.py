@@ -15,7 +15,10 @@ def test_default_configuration_is_valid():
     bond_breaking_cost = 1.0 - params.eta
     assert bath_mode == pytest.approx(0.5)
     assert params.energy_floor < bath_mode < bond_breaking_cost
+    assert params.conduction_energy_quantum < bath_mode
     assert params.bath_energy_quantum < bath_mode
+    assert params.conduction_contact == pytest.approx(0.04)
+    assert params.conduction_bond == pytest.approx(0.20)
     assert params.kappa_base + params.kappa_exposure == pytest.approx(0.5)
 
 
@@ -73,16 +76,33 @@ def test_constraints_are_rechecked_after_float32_rounding():
         validate_params(params)
 
     params = default_params()._replace(
-        conduction_contact=0.1, conduction_bond=0.1 + 1e-10
+        conduction_contact=0.1 + 1e-3, conduction_bond=0.1
     )
     with pytest.raises(ValueError, match="conduction"):
         validate_params(params)
+
+
+def test_equal_and_zero_conduction_frequencies_are_valid():
+    validate_params(
+        default_params()._replace(conduction_contact=0.1, conduction_bond=0.1)
+    )
+    validate_params(
+        default_params()._replace(conduction_contact=0.0, conduction_bond=0.0)
+    )
 
 
 def test_derived_bath_energy_must_remain_finite_in_float32():
     params = default_params()._replace(heat_capacity=1e30, bath_temperature=1e30)
     with pytest.raises(ValueError, match="bath-equilibrium.*finite"):
         validate_params(params)
+
+
+@pytest.mark.parametrize(
+    "name", ("conduction_energy_quantum", "bath_energy_quantum")
+)
+def test_energy_quanta_must_be_positive(name):
+    with pytest.raises(ValueError, match=name):
+        validate_params(default_params()._replace(**{name: 0.0}))
 
 
 def test_boolean_parameters_are_strict():

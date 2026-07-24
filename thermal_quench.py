@@ -59,8 +59,8 @@ class Condition:
 
 
 CONDUCTION_SETTINGS = (
-    ConductionSetting("default", 0.02, 0.10),
-    ConductionSetting("no_bond_advantage", 0.02, 0.02),
+    ConductionSetting("default", 0.04, 0.20),
+    ConductionSetting("no_bond_advantage", 0.04, 0.04),
     ConductionSetting("off", 0.0, 0.0),
 )
 BATH_SETTINGS = (
@@ -125,32 +125,63 @@ def _preserve_total(values: np.ndarray, total: float, index: int = 0) -> np.ndar
     return values
 
 
+def canonical_bath_law(
+    heat_capacity: float,
+    bath_temperature: float,
+    energy_floor: float,
+    energy_quantum: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the discrete canonical law on the bath kernel's energy ladder."""
+
+    if min(heat_capacity, bath_temperature, energy_floor, energy_quantum) <= 0.0:
+        raise ValueError("canonical-law parameters must be positive")
+    reference = heat_capacity * bath_temperature
+    steps_below = max(0, int(np.floor((reference - energy_floor) / energy_quantum)))
+    base = reference - steps_below * energy_quantum
+    while base - energy_quantum >= energy_floor:
+        base -= energy_quantum
+    while base < energy_floor:
+        base += energy_quantum
+
+    # At least fifty thermal scales beyond the mode makes the omitted tail
+    # negligible while the variance term protects large heat capacities.
+    tail = max(
+        50.0 * bath_temperature,
+        20.0 * np.sqrt(heat_capacity + 1.0) * bath_temperature,
+    )
+    maximum = max(base, reference) + tail
+    count = int(np.ceil((maximum - base) / energy_quantum)) + 1
+    if count > 1_000_000:
+        raise ValueError("canonical energy ladder is too finely resolved")
+    energies = base + energy_quantum * np.arange(count, dtype=np.float64)
+    log_weights = heat_capacity * np.log(energies) - energies / bath_temperature
+    weights = np.exp(log_weights - np.max(log_weights))
+    probabilities = weights / np.sum(weights)
+    return energies, probabilities
+
+
 def canonical_bath_background(
     size: int,
     heat_capacity: float,
     bath_temperature: float,
     energy_floor: float,
+    energy_quantum: float,
     seed: int,
 ) -> np.ndarray:
-    """Sample the canonical internal-energy law conditioned on the floor.
+    """Sample the exact canonical law reachable by fixed-quantum bath moves."""
 
-    With ``S(E) = C log(E/E0)`` and ``k_B = 1``, the canonical density is a
-    Gamma distribution with shape ``C + 1`` and scale ``T_b``. Rejection at the
-    energy floor matches the state-space restriction of direct bath exchange.
-    """
-
-    if size < 1 or heat_capacity <= 0.0 or bath_temperature <= 0.0:
-        raise ValueError("invalid canonical background parameters")
+    if size < 1:
+        raise ValueError("canonical background size must be positive")
+    energies, probabilities = canonical_bath_law(
+        heat_capacity,
+        bath_temperature,
+        energy_floor,
+        energy_quantum,
+    )
     rng = np.random.default_rng(seed)
-    values = rng.gamma(heat_capacity + 1.0, bath_temperature, size=size)
-    invalid = values < energy_floor
-    while np.any(invalid):
-        values[invalid] = rng.gamma(
-            heat_capacity + 1.0, bath_temperature, size=int(np.count_nonzero(invalid))
-        )
-        invalid = values < energy_floor
-    return np.asarray(values, dtype=np.float32)
-
+    return np.asarray(
+        rng.choice(energies, size=size, p=probabilities), dtype=np.float32
+    )
 
 def initial_energy_distributions(
     energy: np.ndarray,
@@ -452,12 +483,21 @@ def run_experiment(
     exposure_host = np.asarray(jax.device_get(exposure), dtype=np.float32)
 
     bath_mode = float(params.heat_capacity * params.bath_temperature)
-    canonical_mean = float((params.heat_capacity + 1.0) * params.bath_temperature)
+    canonical_energies, canonical_probabilities = canonical_bath_law(
+        params.heat_capacity,
+        params.bath_temperature,
+        params.energy_floor,
+        params.bath_energy_quantum,
+    )
+    canonical_mean = float(
+        np.dot(canonical_energies, canonical_probabilities)
+    )
     background = canonical_bath_background(
         config.num_particles,
         params.heat_capacity,
         params.bath_temperature,
         params.energy_floor,
+        params.bath_energy_quantum,
         seed ^ 0xB47BA7A,
     )
     source_energy = np.asarray(state.E, dtype=np.float32)
@@ -543,6 +583,9 @@ def run_experiment(
                 bonds,
                 c0,
                 c1,
+                params.conduction_energy_quantum,
+                params.energy_floor,
+                params.heat_capacity,
             )
             exchanged = direct_bath_exchange(
                 bath_key,

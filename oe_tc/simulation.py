@@ -51,7 +51,9 @@ def _conduction_phase(
     key: jax.Array,
     state: State,
     params: Params,
-) -> State:
+) -> tuple[State, jax.Array, jax.Array]:
+    """Apply one stochastic conduction pass and return compact diagnostics."""
+
     result = randomized_conduction_sweep(
         key,
         state.E,
@@ -60,8 +62,12 @@ def _conduction_phase(
         state.bonds,
         params.conduction_contact,
         params.conduction_bond,
+        params.conduction_energy_quantum,
+        params.energy_floor,
+        params.heat_capacity,
     )
-    return state._replace(E=result.energy)
+    accepted = jnp.sum(result.accepted, dtype=jnp.int32)
+    return state._replace(E=result.energy), accepted, result.throughput
 
 
 def _structural_phases(
@@ -120,7 +126,7 @@ def sweep(
     state, source_heat, source_incident, source_escaped = _source_phase(
         source_key, state, params, config
     )
-    state = _conduction_phase(
+    state, conduction_exchanges, conduction_throughput = _conduction_phase(
         purpose_key(conduction_key, 0), state, params
     )
     state, molecule_metrics, bond_metrics = _structural_phases(
@@ -132,17 +138,26 @@ def sweep(
         config,
     )
 
-    def second_conduction(current: State) -> State:
+    def second_conduction(current: State):
         return _conduction_phase(
             purpose_key(conduction_key, 1), current, params
         )
 
-    state = jax.lax.cond(
+    def skip_second_conduction(current: State):
+        return (
+            current,
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0.0, dtype=current.E.dtype),
+        )
+
+    state, second_exchanges, second_throughput = jax.lax.cond(
         jnp.asarray(params.second_conduction),
         second_conduction,
-        lambda current: current,
+        skip_second_conduction,
         state,
     )
+    conduction_exchanges = conduction_exchanges + second_exchanges
+    conduction_throughput = conduction_throughput + second_throughput
 
     bath = direct_bath_exchange(
         bath_key,
@@ -178,6 +193,7 @@ def sweep(
         source_escaped_energy=source_escaped,
         bath_energy_direct=bath.heat,
         bath_energy_structural=structural_bath_heat,
+        conduction_energy_throughput=conduction_throughput,
         internal_energy=after.internal_energy,
         configurational_energy=after.configurational_energy,
         num_molecules=after.num_molecules,
@@ -185,6 +201,7 @@ def sweep(
         accepted_molecule_moves=molecule_metrics.accepted_moves,
         accepted_bond_flips=bond_metrics.accepted_flips,
         accepted_bath_exchanges=jnp.sum(bath.accepted, dtype=jnp.int32),
+        accepted_conduction_exchanges=conduction_exchanges,
         molecule_conflicts=molecule_metrics.conflicts,
         molecule_retries=molecule_metrics.retries,
         molecule_unresolved=molecule_metrics.unresolved,

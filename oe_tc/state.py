@@ -32,6 +32,7 @@ class StepMetrics(NamedTuple):
     source_escaped_energy: jax.Array
     bath_energy_direct: jax.Array
     bath_energy_structural: jax.Array
+    conduction_energy_throughput: jax.Array
     internal_energy: jax.Array
     configurational_energy: jax.Array
     num_molecules: jax.Array
@@ -39,6 +40,7 @@ class StepMetrics(NamedTuple):
     accepted_molecule_moves: jax.Array
     accepted_bond_flips: jax.Array
     accepted_bath_exchanges: jax.Array
+    accepted_conduction_exchanges: jax.Array
     molecule_conflicts: jax.Array
     molecule_retries: jax.Array
     molecule_unresolved: jax.Array

@@ -667,11 +667,13 @@ def write_metrics_dashboard(
         "source_energy",
         "bath_energy_direct",
         "bath_energy_structural",
+        "conduction_energy_throughput",
         "num_molecules",
         "num_bonds",
         "accepted_molecule_moves",
         "accepted_bond_flips",
         "accepted_bath_exchanges",
+        "accepted_conduction_exchanges",
         "molecule_conflicts",
         "molecule_unresolved",
         "mis_iterations",
@@ -707,6 +709,11 @@ def write_metrics_dashboard(
         plot_series(energy, values["source_energy"], "source flux")
         bath_flux = values["bath_energy_direct"] + values["bath_energy_structural"]
         plot_series(energy, bath_flux, "bath flux")
+        plot_series(
+            energy,
+            values["conduction_energy_throughput"],
+            "conduction throughput",
+        )
         energy.set_title("Energy and flux")
         energy.legend(loc="best", fontsize="small")
 
@@ -720,6 +727,11 @@ def write_metrics_dashboard(
         plot_series(events, values["accepted_molecule_moves"], "molecule moves")
         plot_series(events, values["accepted_bond_flips"], "bond flips")
         plot_series(events, values["accepted_bath_exchanges"], "bath exchanges")
+        plot_series(
+            events,
+            values["accepted_conduction_exchanges"],
+            "conduction exchanges",
+        )
         events.set_title("Accepted events per sweep")
         events.legend(loc="best", fontsize="small")
 

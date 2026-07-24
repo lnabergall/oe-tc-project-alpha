@@ -3,7 +3,7 @@
 This repository implements a driven, dissipative lattice chemistry for
 large-scale experiments in thermodynamic computing and open-ended
 self-organization. Bond-connected components form rigid molecules. A top-down
-source injects internal energy; contact and bond conduction transport it;
+source injects internal energy; locally balanced stochastic contact and bond conduction transports it;
 molecular motion and reversible bonding exchange internal, configurational,
 and bath energy; and exposed particles exchange heat with an external bath.
 
@@ -97,7 +97,10 @@ python run_simulation.py --steps 20000 --resume data/runs/run_001
 
 Chunk size may change on resume. Physical parameters, static shapes, seed, and
 snapshot cadence remain immutable. Counter-derived random streams make the
-trajectory independent of chunk partitioning.
+trajectory independent of chunk partitioning. Model version 2 replaces the
+former deterministic pair-averaging conduction rule with finite-reservoir
+stochastic exchanges; checkpoints from model version 1 are intentionally not
+resume-compatible.
 
 Override parameters with an inline JSON object or a JSON file:
 
@@ -164,8 +167,9 @@ python thermal_quench.py data/runs/run_001 \
 This source-off experiment freezes geometry and bonds, compares actual,
 uniform, localized, and canonical-background energy distributions, and varies
 conduction and exposure-dependent bath coupling. It reports heat relative to a
-matched thermal background so conduction-assisted removal of injected excess
-is not confused with a shifted source-off baseline. Use `--state-file` to test
+matched discrete-canonical background so conduction-assisted removal of
+injected excess is separated from finite-sample thermal drift. Use
+`--state-file` to test
 a snapshot instead of the current checkpoint and `--quench-total` to impose the
 same total energy across structural checkpoints.
 
@@ -184,6 +188,7 @@ accounting and conflict arbitration are expected to dominate mature large runs.
 
 ## Package layout
 
+- `docs/model_draft3.tex`: project notes and the formal Model 7 specification;
 - `oe_tc/config.py`, `oe_tc/state.py`: immutable configuration and pytrees;
 - `oe_tc/geometry.py`, `oe_tc/topology.py`: cylindrical lattice and bonded
   components;
@@ -201,8 +206,11 @@ accounting and conflict arbitration are expected to dominate mature large runs.
   metrics dashboards.
 
 Each structural proposal samples either a bath or internal-energy channel and
-uses a log-space Metropolis decision. Metrics include signed source and bath
-fluxes, scheduler saturation, component convergence, and total-energy residual.
+uses a log-space Metropolis decision. Conduction likewise uses signed
+fixed-quantum proposals whose acceptance is set by the two finite reservoirs'
+entropy change. Metrics include signed source and bath fluxes, conservative
+conduction throughput, scheduler saturation, component convergence, and
+total-energy residual.
 A run is not persisted when bounded component labeling fails to converge.
 
 ## Numerical and scaling notes

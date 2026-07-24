@@ -6,12 +6,27 @@ import thermal_quench
 
 
 def test_canonical_background_is_reproducible_and_respects_floor():
-    first = thermal_quench.canonical_bath_background(100, 2.5, 0.2, 0.05, 7)
-    second = thermal_quench.canonical_bath_background(100, 2.5, 0.2, 0.05, 7)
+    first = thermal_quench.canonical_bath_background(
+        100, 2.5, 0.2, 0.05, 0.25, 7
+    )
+    second = thermal_quench.canonical_bath_background(
+        100, 2.5, 0.2, 0.05, 0.25, 7
+    )
 
     np.testing.assert_array_equal(first, second)
     assert first.dtype == np.float32
     assert np.all(first >= 0.05)
+    np.testing.assert_allclose(np.mod(first, 0.25), 0.0, atol=1e-6)
+
+
+def test_discrete_canonical_law_has_the_expected_neighbor_ratio():
+    energies, probabilities = thermal_quench.canonical_bath_law(
+        2.5, 0.2, 0.05, 0.25
+    )
+
+    expected = np.power(energies[1:] / energies[:-1], 2.5) * np.exp(-0.25 / 0.2)
+    np.testing.assert_allclose(probabilities[1:] / probabilities[:-1], expected)
+    np.testing.assert_allclose(np.sum(probabilities), 1.0)
 
 
 def test_initial_distributions_preserve_total_and_target_exposure_extrema():

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oe-tc-project-alpha"
-version = "0.2.0"
+version = "0.3.0"
 description = "Large-scale JAX experiments in driven thermodynamic self-organization"
 requires-python = ">=3.12"
 dependencies = [

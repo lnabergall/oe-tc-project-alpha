@@ -34,6 +34,13 @@ def test_jitted_sweep_preserves_invariants_and_energy_ledger() -> None:
     validation = validate_state(state, params, config)
     assert bool(validation.valid)
     assert int(state.sweep) == 1
+    assert int(metrics.accepted_conduction_exchanges) >= 0
+    assert np.isclose(
+        float(metrics.conduction_energy_throughput),
+        params.conduction_energy_quantum
+        * int(metrics.accepted_conduction_exchanges),
+        atol=2e-6,
+    )
     assert abs(float(metrics.energy_residual)) < 2e-5
 
 

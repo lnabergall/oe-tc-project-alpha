@@ -196,3 +196,12 @@ open-endedness, the conduction kernel should be made equilibrium preserving.
 After that correction, repeat this frozen-geometry test over several structural
 checkpoints and independent simulation seeds, then relate transport gains to
 specific molecular topology and later source-capture performance.
+
+## Follow-up
+
+The deterministic-equilibrium defect identified here was corrected on
+2026-07-23 by replacing pair averaging with locally balanced stochastic
+fixed-quantum exchanges. See
+[`stochastic_conduction_validation_2026-07-23.md`](stochastic_conduction_validation_2026-07-23.md).
+The numerical results above remain a historical characterization of model
+version 1 and should not be used as calibration results for model version 2.

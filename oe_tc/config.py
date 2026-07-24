@@ -79,6 +79,7 @@ class Params(NamedTuple):
 
     conduction_contact: float
     conduction_bond: float
+    conduction_energy_quantum: float
     bath_energy_quantum: float
 
     bath_channel_probability: float
@@ -117,8 +118,9 @@ def default_params() -> Params:
         gamma_exposure=1.0,
         kappa_base=0.1,
         kappa_exposure=0.4,
-        conduction_contact=0.02,
-        conduction_bond=0.10,
+        conduction_contact=0.04,
+        conduction_bond=0.20,
+        conduction_energy_quantum=0.25,
         bath_energy_quantum=0.25,
         bath_channel_probability=0.5,
         translation_probability=0.8,
@@ -195,8 +197,10 @@ def validate_params(params: Params) -> None:
         )
     if not 0.0 <= device.kappa_base <= float(kappa_peak) <= 1.0:
         raise ValueError("kappa must remain in [0, 1]")
-    if not 0.0 <= device.conduction_contact < device.conduction_bond <= 1.0:
-        raise ValueError("conduction must satisfy 0 <= contact < bond <= 1")
+    if not 0.0 <= device.conduction_contact <= device.conduction_bond <= 1.0:
+        raise ValueError("conduction must satisfy 0 <= contact <= bond <= 1")
+    if device.conduction_energy_quantum <= 0.0:
+        raise ValueError("conduction_energy_quantum must be positive")
     if device.bath_energy_quantum <= 0.0:
         raise ValueError("bath_energy_quantum must be positive")
     if not 0.0 <= device.bath_channel_probability <= 1.0:
